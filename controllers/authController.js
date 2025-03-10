@@ -32,12 +32,17 @@ const loginUser = async (req, res) => {
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
     }
 
     // Check if account is locked
     if (user.isLocked && user.lockUntil > Date.now()) {
-      return res.status(400).json({ message: 'Account is locked. Try again later.' });
+      const unlockTime = new Date(user.lockUntil).toLocaleString(); // Convert to readable format
+      return res.status(400).json({ 
+        type: 'locked', 
+        message: `Account is locked. Try again after ${unlockTime}`,
+        lockUntil: user.lockUntil 
+      });
     }
 
     const isMatch = await user.comparePassword(password);
@@ -52,7 +57,7 @@ const loginUser = async (req, res) => {
       }
 
       await user.save();
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
     }
 
     // Reset failed login attempts on successful login
@@ -66,7 +71,7 @@ const loginUser = async (req, res) => {
 
     res.json({ token });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ type: 'server', message: 'Server error' });
   }
 };
 
