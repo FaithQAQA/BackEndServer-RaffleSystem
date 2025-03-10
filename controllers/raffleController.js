@@ -68,9 +68,10 @@ const updateRaffle = async (req, res) => {
     await raffle.save();
     res.json(raffle);
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error updating raffle:', err); // Log the actual error
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
-};
+}
 
 // Delete a raffle
 const deleteRaffle = async (req, res) => {
