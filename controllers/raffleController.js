@@ -1,5 +1,6 @@
 // controllers/raffleController.js
 const Raffle = require('../Models/Raffle');
+const mongoose = require('mongoose');
 
 // Create a new raffle
 const createRaffle = async (req, res) => {
