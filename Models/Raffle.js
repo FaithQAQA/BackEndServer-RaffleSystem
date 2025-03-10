@@ -8,7 +8,7 @@ const raffleSchema = new mongoose.Schema({
   endDate: { type: Date, required: true },
   price: { type: Number, required: true },
   category: { type: String, required: true }, // Added category field
-  status: { type: String, enum: ['active', 'closed'], default: 'active' }, // Added status field
+  status: { type: String, enum: ['active', 'closed', 'completed'], default: 'active' }, // Added status field
   raised: { type: Number, default: 0 },
   raffleItems: [{ type: mongoose.Schema.Types.ObjectId, ref: 'RaffleItem' }],
   participants: [
