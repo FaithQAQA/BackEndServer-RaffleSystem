@@ -81,20 +81,28 @@ const updateRaffle = async (req, res) => {
 };
 
 
-// Delete a raffle
+
 const deleteRaffle = async (req, res) => {
   try {
+    // Check if the provided ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid raffle ID' });
+    }
+
     const raffle = await Raffle.findById(req.params.id);
     if (!raffle) {
       return res.status(404).json({ message: 'Raffle not found' });
     }
 
-    await raffle.remove();
-    res.json({ message: 'Raffle deleted' });
+    await Raffle.findByIdAndDelete(req.params.id); // Use this instead of `.remove()`
+    
+    res.json({ message: 'Raffle deleted successfully' });
   } catch (err) {
+    console.error(err); // Log the error for debugging
     res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 module.exports = {
   createRaffle,
