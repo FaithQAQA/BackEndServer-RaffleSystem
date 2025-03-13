@@ -88,64 +88,68 @@ const verifyEmail = async (req, res) => {
 
 // 📌 Login User (Require Email Verification)
 const loginUser = async (req, res) => {
-  console.log("Login request received:", req.body);
+  console.log("🔹 [LOGIN] Request received:", req.body);
 
   try {
     const user = await User.findOne({ email: req.body.email });
-    console.log("User found:", user);
+    console.log("🔹 [LOGIN] User found:", user ? user.email : "No user found");
 
     if (!user) {
-      console.log("User not found");
-      return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
+      console.log("❌ [LOGIN] User not found");
+      return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
-    console.log("Checking email verification...");
+    console.log("🔹 [LOGIN] Checking email verification...");
     if (!user.emailVerified && !user.isAdmin) {
-      console.log("Email not verified & user is not admin");
-      return res.status(400).json({ type: 'unverified', message: 'Please verify your email before logging in.' });
+      console.log("❌ [LOGIN] Email not verified & user is not admin");
+      return res.status(400).json({ type: "unverified", message: "Please verify your email before logging in." });
     }
 
-    console.log("Checking if account is locked...");
+    console.log("🔹 [LOGIN] Checking if account is locked...");
     if (user.isLocked && user.lockUntil > Date.now()) {
-      console.log("Account is locked until:", user.lockUntil);
+      console.log(`❌ [LOGIN] Account is locked until: ${new Date(user.lockUntil).toLocaleString()}`);
       return res.status(400).json({ 
-        type: 'locked', 
+        type: "locked", 
         message: `Account is locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,
         lockUntil: user.lockUntil 
       });
     }
 
-    console.log("Checking password...");
+    console.log("🔹 [LOGIN] Checking password...");
+    console.log("Stored password hash:", user.password);
+    console.log("Password provided for login:", req.body.password);
+
     const isMatch = await bcrypt.compare(req.body.password, user.password);
     if (!isMatch) {
-      console.log("Invalid password. Increasing failed login attempts...");
+      console.log("❌ [LOGIN] Invalid password. Increasing failed login attempts...");
       user.failedLoginAttempts += 1;
 
       if (user.failedLoginAttempts >= 3) {
-        console.log("Too many failed attempts. Locking account...");
+        console.log("❌ [LOGIN] Too many failed attempts. Locking account...");
         user.isLocked = true;
         user.lockUntil = Date.now() + 30 * 60 * 1000;
       }
 
       await user.save();
-      return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
+      return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
-    console.log("Password is correct. Resetting failed login attempts...");
+    console.log("✅ [LOGIN] Password is correct. Resetting failed login attempts...");
     user.failedLoginAttempts = 0;
     user.isLocked = false;
     user.lockUntil = null;
     await user.save();
 
-    console.log("Generating JWT token...");
+    console.log("🔹 [LOGIN] Generating JWT token...");
     const payload = { id: user._id, isAdmin: user.isAdmin };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-    console.log("Login successful! Sending response.");
-    res.json({ message: 'Login successful!', token });
+    console.log("✅ [LOGIN] Successful login! Sending response.");
+    res.json({ message: "Login successful!", token });
   } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).json({ type: 'server', message: 'Server error' });
+    console.error("❌ [LOGIN] Server error:", err);
+    res.status(500).json({ type: "server", message: "Server error" });
   }
 };
+
 module.exports = { registerUser, verifyEmail, loginUser };
