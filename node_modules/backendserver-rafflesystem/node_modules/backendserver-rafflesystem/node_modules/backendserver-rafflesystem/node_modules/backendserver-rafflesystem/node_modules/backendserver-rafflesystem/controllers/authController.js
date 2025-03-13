@@ -47,7 +47,12 @@ const registerUser = async (req, res) => {
     await user.save();
 
     // Send verification email
-    const verificationLink = `${process.env.FRONTEND_URL}/api/auth/verify-email?token=${verificationToken}`;
+    //const verificationLink = `${process.env.FRONTEND_URL}/api/auth/verify-email?token=${verificationToken}`;
+
+    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
+    const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+
+
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
