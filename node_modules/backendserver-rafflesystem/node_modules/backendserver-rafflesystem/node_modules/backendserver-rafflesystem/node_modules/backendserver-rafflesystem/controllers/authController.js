@@ -88,35 +88,41 @@ const verifyEmail = async (req, res) => {
 
 // 📌 Login User (Require Email Verification)
 const loginUser = async (req, res) => {
-  const { email, password } = req.body;
+  console.log("Login request received:", req.body);
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: req.body.email });
+    console.log("User found:", user);
+
     if (!user) {
+      console.log("User not found");
       return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
     }
 
-    // Check if email is verified
-    if (!user.emailVerified) {
+    console.log("Checking email verification...");
+    if (!user.emailVerified && !user.isAdmin) {
+      console.log("Email not verified & user is not admin");
       return res.status(400).json({ type: 'unverified', message: 'Please verify your email before logging in.' });
     }
 
-    // Check if account is locked
+    console.log("Checking if account is locked...");
     if (user.isLocked && user.lockUntil > Date.now()) {
-      const unlockTime = new Date(user.lockUntil).toLocaleString();
+      console.log("Account is locked until:", user.lockUntil);
       return res.status(400).json({ 
         type: 'locked', 
-        message: `Account is locked. Try again after ${unlockTime}`,
+        message: `Account is locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,
         lockUntil: user.lockUntil 
       });
     }
 
-    // Compare password
-    const isMatch = await bcrypt.compare(password, user.password);
+    console.log("Checking password...");
+    const isMatch = await bcrypt.compare(req.body.password, user.password);
     if (!isMatch) {
+      console.log("Invalid password. Increasing failed login attempts...");
       user.failedLoginAttempts += 1;
 
       if (user.failedLoginAttempts >= 3) {
+        console.log("Too many failed attempts. Locking account...");
         user.isLocked = true;
         user.lockUntil = Date.now() + 30 * 60 * 1000;
       }
@@ -125,20 +131,21 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
     }
 
-    // Reset failed login attempts
+    console.log("Password is correct. Resetting failed login attempts...");
     user.failedLoginAttempts = 0;
     user.isLocked = false;
     user.lockUntil = null;
     await user.save();
 
-    // Generate JWT token
-    const payload = { id: user._id };
+    console.log("Generating JWT token...");
+    const payload = { id: user._id, isAdmin: user.isAdmin };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
+    console.log("Login successful! Sending response.");
     res.json({ message: 'Login successful!', token });
   } catch (err) {
+    console.error("Server error:", err);
     res.status(500).json({ type: 'server', message: 'Server error' });
   }
 };
-
 module.exports = { registerUser, verifyEmail, loginUser };
