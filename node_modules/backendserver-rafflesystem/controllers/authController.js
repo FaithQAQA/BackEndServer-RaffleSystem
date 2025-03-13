@@ -25,11 +25,11 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // Validate password strength
+    /* Validate password strength
     if (password.length < 8 || !/\d/.test(password) || !/[!@#$%^&*]/.test(password)) {
       return res.status(400).json({ message: 'Password must be at least 8 characters long, contain a number and a special character' });
     }
-
+*/
     // Hash password before saving
     const hashedPassword = await bcrypt.hash(password, 10);
     
