@@ -96,8 +96,8 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ type: 'credentials', message: 'Invalid email or password' });
     }
 
-    // Check if email is verified (unless the user is an admin)
-    if (!user.emailVerified && !user.isAdmin) {
+    // Check if email is verified
+    if (!user.emailVerified) {
       return res.status(400).json({ type: 'unverified', message: 'Please verify your email before logging in.' });
     }
 
@@ -132,7 +132,7 @@ const loginUser = async (req, res) => {
     await user.save();
 
     // Generate JWT token
-    const payload = { id: user._id, isAdmin: user.isAdmin };
+    const payload = { id: user._id };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     res.json({ message: 'Login successful!', token });
@@ -140,6 +140,5 @@ const loginUser = async (req, res) => {
     res.status(500).json({ type: 'server', message: 'Server error' });
   }
 };
-
 
 module.exports = { registerUser, verifyEmail, loginUser };
