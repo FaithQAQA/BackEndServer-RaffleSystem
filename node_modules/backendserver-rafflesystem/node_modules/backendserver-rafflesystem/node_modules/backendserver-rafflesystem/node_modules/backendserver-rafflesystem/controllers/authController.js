@@ -4,6 +4,9 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const User = require('../Models/User');
 
+
+require('dotenv').config();
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
