@@ -31,6 +31,7 @@ const registerUser = async (req, res) => {
     }
 */
     // Hash password before saving
+    console.log(password)
     const hashedPassword = await bcrypt.hash(password, 10);
     
     // Generate verification token
@@ -120,6 +121,8 @@ const loginUser = async (req, res) => {
     console.log("Password provided for login:", req.body.password);
 
     const isMatch = await bcrypt.compare(req.body.password, user.password);
+    console.log(req.body.password, "req body")
+    console.log(user.password, "user password")
     if (!isMatch) {
       console.log("❌ [LOGIN] Invalid password. Increasing failed login attempts...");
       user.failedLoginAttempts += 1;
