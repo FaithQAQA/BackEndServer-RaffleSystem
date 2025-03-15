@@ -57,10 +57,17 @@ const registerUser = async (req, res) => {
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Verify Your Email',
-      html: `<p>Click <a href="${verificationLink}">here</a> to verify your email.</p>`,
+      subject: 'Email Verification Required',
+      html: `
+        <p>Dear User,</p>
+        <p>Thank you for signing up. To complete your registration, please verify your email address by clicking the link below:</p>
+        <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
+        <p>If you did not request this, please ignore this email.</p>
+        <p>Best regards,</p>
+        <p>Your Company Name</p>
+      `,
     });
-
+    
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
