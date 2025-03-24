@@ -2,38 +2,42 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-const User = require('../Models/User');
-
+const User = require('../Models/User'); // Ensure correct path
 
 require('dotenv').config();
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER, // Your email
-    pass: process.env.EMAIL_PASS, // Your email password or app password
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
 });
 
-// 📌 Register a New User
+// 📌 Register User
 const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
 
   try {
+    console.log("🔹 [REGISTER] Incoming request:", req.body);
+
     let user = await User.findOne({ email });
     if (user) {
+      console.log("❌ [REGISTER] User already exists:", email);
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    /* Validate password strength
+    // ✅ Uncomment this if you want password validation
+    /*
     if (password.length < 8 || !/\d/.test(password) || !/[!@#$%^&*]/.test(password)) {
       return res.status(400).json({ message: 'Password must be at least 8 characters long, contain a number and a special character' });
     }
-*/
-    // Hash password before saving
-    console.log(password)
+    */
+
+    // Hash password
+    console.log("🔹 [REGISTER] Hashing password...");
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     // Generate verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
@@ -43,53 +47,68 @@ const registerUser = async (req, res) => {
       email,
       password: hashedPassword,
       verificationToken,
+      emailVerified: false,
     });
 
     await user.save();
+    console.log("✅ [REGISTER] User saved:", user.email);
 
-    // Send verification email
-    //const verificationLink = `${process.env.FRONTEND_URL}/api/auth/verify-email?token=${verificationToken}`;
-
+    // Construct verification link
     const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
     const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
 
+    // Send verification email
+    try {
+      console.log("🔹 [REGISTER] Sending verification email to:", email);
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Email Verification Required',
-      html: `
-        <p>Dear User,</p>
-        <p>Thank you for signing up. To complete your registration, please verify your email address by clicking the link below:</p>
-        <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
-        <p>If you did not request this, please ignore this email.</p>
-        <p>Best regards,</p>
-        <p>Your Company Name</p>
-      `,
-    });
-    
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'Email Verification Required',
+        html: `
+          <p>Dear ${username},</p>
+          <p>Thank you for signing up. Please verify your email by clicking the link below:</p>
+          <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
+          <p>If you did not request this, please ignore this email.</p>
+          <p>Best regards,</p>
+          <p>Your Company Name</p>
+        `,
+      });
+
+      console.log("✅ [REGISTER] Verification email sent.");
+    } catch (emailError) {
+      console.error("❌ [REGISTER] Error sending email:", emailError);
+      return res.status(201).json({ message: 'User registered, but email sending failed.' });
+    }
+
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error("❌ [REGISTER] Server error:", err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
 
-//  Verify Email
+// 📌 Verify Email
 const verifyEmail = async (req, res) => {
   const { token } = req.query;
 
   try {
+    console.log("🔹 [VERIFY] Token received:", token);
     const user = await User.findOne({ verificationToken: token });
+
     if (!user) {
+      console.log("❌ [VERIFY] Invalid token");
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
 
     user.emailVerified = true;
     user.verificationToken = null;
     await user.save();
+    console.log("✅ [VERIFY] Email verified for:", user.email);
 
     res.json({ message: 'Email verified successfully! You can now log in.' });
   } catch (err) {
+    console.error("❌ [VERIFY] Server error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -100,62 +119,55 @@ const loginUser = async (req, res) => {
 
   try {
     const user = await User.findOne({ email: req.body.email });
-    console.log("🔹 [LOGIN] User found:", user ? user.email : "No user found");
-
     if (!user) {
-      console.log("❌ [LOGIN] User not found");
+      console.log("❌ [LOGIN] User not found:", req.body.email);
       return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
-    console.log("🔹 [LOGIN] Checking email verification...");
+    // Require email verification unless admin
     if (!user.emailVerified && !user.isAdmin) {
-      console.log("❌ [LOGIN] Email not verified & user is not admin");
+      console.log("❌ [LOGIN] Email not verified");
       return res.status(400).json({ type: "unverified", message: "Please verify your email before logging in." });
     }
 
-    console.log("🔹 [LOGIN] Checking if account is locked...");
+    // Handle account lock
     if (user.isLocked && user.lockUntil > Date.now()) {
-      console.log(`❌ [LOGIN] Account is locked until: ${new Date(user.lockUntil).toLocaleString()}`);
+      console.log(`❌ [LOGIN] Account locked until: ${new Date(user.lockUntil).toLocaleString()}`);
       return res.status(400).json({ 
         type: "locked", 
-        message: `Account is locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,
+        message: `Account locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,
         lockUntil: user.lockUntil 
       });
     }
 
-    console.log("🔹 [LOGIN] Checking password...");
-    console.log("Stored password hash:", user.password);
-    console.log("Password provided for login:", req.body.password);
-
+    // Check password
     const isMatch = await bcrypt.compare(req.body.password, user.password);
-    console.log(req.body.password, "req body")
-    console.log(user.password, "user password")
     if (!isMatch) {
-      console.log("❌ [LOGIN] Invalid password. Increasing failed login attempts...");
+      console.log("❌ [LOGIN] Incorrect password");
       user.failedLoginAttempts += 1;
 
       if (user.failedLoginAttempts >= 3) {
-        console.log("❌ [LOGIN] Too many failed attempts. Locking account...");
+        console.log("❌ [LOGIN] Locking account due to failed attempts");
         user.isLocked = true;
-        user.lockUntil = Date.now() + 30 * 60 * 1000;
+        user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
       }
 
       await user.save();
       return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
-    console.log("✅ [LOGIN] Password is correct. Resetting failed login attempts...");
+    // Reset failed attempts & unlock account
     user.failedLoginAttempts = 0;
     user.isLocked = false;
     user.lockUntil = null;
     await user.save();
 
-    console.log("🔹 [LOGIN] Generating JWT token...");
+    // Generate JWT token
+    console.log("✅ [LOGIN] Login successful! Generating token...");
     const payload = { id: user._id, isAdmin: user.isAdmin };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-    console.log("✅ [LOGIN] Successful login! Sending response.");
-    res.json({ message: "Login successful!", token,   isAdmin: user.isAdmin });
+    res.json({ message: "Login successful!", token, isAdmin: user.isAdmin });
   } catch (err) {
     console.error("❌ [LOGIN] Server error:", err);
     res.status(500).json({ type: "server", message: "Server error" });
