@@ -54,9 +54,9 @@ const registerUser = async (req, res) => {
     console.log("✅ [REGISTER] User saved:", user.email);
 
     // Construct verification link
-    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
+    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
     const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
-
+    
     // Send verification email
     try {
       console.log("🔹 [REGISTER] Sending verification email to:", email);
