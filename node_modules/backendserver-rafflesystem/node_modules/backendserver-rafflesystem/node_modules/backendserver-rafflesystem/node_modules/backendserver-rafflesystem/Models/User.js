@@ -12,6 +12,9 @@ const userSchema = new mongoose.Schema({
   verificationToken: { type: String }, // New field
   isLocked: { type: Boolean, default: false }, // Lock account after too many failed attempts
   lockUntil: { type: Date }, // Time until account is locked
+  resetToken: { type: String }, 
+  resetTokenExpiry: { type: Date },
+
   tickets: [
     {
       raffleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Raffle' },

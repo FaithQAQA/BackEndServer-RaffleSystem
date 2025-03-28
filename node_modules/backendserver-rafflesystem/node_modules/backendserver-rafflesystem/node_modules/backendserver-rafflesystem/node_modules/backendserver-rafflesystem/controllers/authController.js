@@ -159,14 +159,25 @@ const forgotPassword = async (req, res) => {
 
 
 
-// 📌 Reset Password
+// Reset Password
 const resetPassword = async (req, res) => {
-  const { token, newPassword } = req.body;
-
   try {
-    const user = await User.findOne({ resetToken: token, resetTokenExpiry: { $gt: Date.now() } });
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ message: 'Token and new password are required' });
+    }
+
+    // Find user by reset token
+    const user = await User.findOne({ resetToken: token });
+
     if (!user) {
       return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+
+    // Check if token is expired
+    if (user.resetTokenExpiry && user.resetTokenExpiry < Date.now()) {
+      return res.status(400).json({ message: 'Reset token has expired' });
     }
 
     // Hash the new password
@@ -176,12 +187,14 @@ const resetPassword = async (req, res) => {
     user.password = hashedPassword;
     user.resetToken = null;
     user.resetTokenExpiry = null;
+
     await user.save();
 
-    res.json({ message: 'Password reset successful! You can now log in with your new password.' });
-  } catch (err) {
-    console.error("❌ [RESET PASSWORD] Server error:", err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(200).json({ message: 'Password reset successfully' });
+
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ message: 'Server error, please try again' });
   }
 };
 
