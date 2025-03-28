@@ -113,6 +113,79 @@ const verifyEmail = async (req, res) => {
   }
 };
 
+
+
+// 📌 Forgot Password
+const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: 'No user found with that email' });
+    }
+
+    // Generate a reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.resetToken = resetToken;
+    user.resetTokenExpiry = Date.now() + 3600000; // Token expires in 1 hour
+    await user.save();
+
+    // Send password reset email
+    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
+    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Password Reset Request',
+      html: `
+        <p>Dear ${user.username},</p>
+        <p>We received a request to reset your password. Please click the link below to reset it:</p>
+        <p><a href="${resetLink}" style="color: #007bff; text-decoration: none;">Reset My Password</a></p>
+        <p>If you did not request this, please ignore this email.</p>
+        <p>Best regards,</p>
+        <p>Your Company Name</p>
+      `,
+    });
+
+    res.json({ message: 'Password reset link sent to your email.' });
+  } catch (err) {
+    console.error("❌ [FORGOT PASSWORD] Server error:", err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+
+
+// 📌 Reset Password
+const resetPassword = async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  try {
+    const user = await User.findOne({ resetToken: token, resetTokenExpiry: { $gt: Date.now() } });
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear reset token
+    user.password = hashedPassword;
+    user.resetToken = null;
+    user.resetTokenExpiry = null;
+    await user.save();
+
+    res.json({ message: 'Password reset successful! You can now log in with your new password.' });
+  } catch (err) {
+    console.error("❌ [RESET PASSWORD] Server error:", err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
 // 📌 Login User (Require Email Verification)
 const loginUser = async (req, res) => {
   console.log("🔹 [LOGIN] Request received:", req.body);
@@ -174,4 +247,11 @@ const loginUser = async (req, res) => {
   }
 };
 
-module.exports = { registerUser, verifyEmail, loginUser };
+module.exports = { 
+  registerUser, 
+  verifyEmail, 
+  loginUser, 
+  forgotPassword, 
+  resetPassword 
+};
+
