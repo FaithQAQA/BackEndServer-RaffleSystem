@@ -6,8 +6,9 @@ const cartSchema = new mongoose.Schema({
     {
       raffleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Raffle', required: true },
       quantity: { type: Number, required: true },
+      totalCost: { type: Number, required: true }  // Ensure totalCost is required here
     }
   ]
-}, { timestamps: true });
+});
 
 module.exports = mongoose.model('Cart', cartSchema);
