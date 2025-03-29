@@ -14,7 +14,8 @@ app.use(express.json());
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api', raffleRoutes, CartRoutes);
+app.use('/api', raffleRoutes);
+app.use('/api', CartRoutes);
 
 // Connect to MongoDB
 connectDB();
