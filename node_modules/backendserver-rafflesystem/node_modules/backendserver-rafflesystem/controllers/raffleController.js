@@ -15,6 +15,37 @@ const createRaffle = async (req, res) => {
   }
 };
 
+
+const getRaffleWinningChance = async (raffleId, userId) => {
+  try {
+    const raffle = await Raffle.findById(raffleId);
+
+    if (!raffle) {
+      throw new Error('Raffle not found');
+    }
+
+    // Calculate total tickets bought for the raffle
+    const totalTickets = raffle.participants.reduce((sum, participant) => sum + participant.ticketsBought, 0);
+
+    // Get the user's tickets for this raffle
+    const user = raffle.participants.find(p => p.userId.toString() === userId.toString());
+    const userTickets = user ? user.ticketsBought : 0;
+
+    // Calculate winning chance
+    const winningChance = totalTickets > 0 ? (userTickets / totalTickets) * 100 : 0;
+
+    return {
+      totalTickets,
+      userTickets,
+      winningChance: winningChance.toFixed(2) // Round to 2 decimal places
+    };
+  } catch (error) {
+    console.error('Error calculating winning chance:', error.message);
+    return null;
+  }
+};
+
+
 // Fetch all raffles
 const getAllRaffles = async (req, res) => {
   try {
@@ -111,4 +142,5 @@ module.exports = {
   getRaffleById,
   updateRaffle,
   deleteRaffle,
+  getRaffleWinningChance
 };
