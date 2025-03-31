@@ -1,4 +1,3 @@
-// models/Raffle.js
 const mongoose = require('mongoose');
 
 const raffleSchema = new mongoose.Schema({
@@ -7,9 +6,10 @@ const raffleSchema = new mongoose.Schema({
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
   price: { type: Number, required: true },
-  category: { type: String, required: true }, // Added category field
-  status: { type: String, enum: ['active', 'closed', 'completed'], default: 'active' }, // Added status field
+  category: { type: String, required: true },
+  status: { type: String, enum: ['active', 'closed', 'completed'], default: 'active' },
   raised: { type: Number, default: 0 },
+  totalTicketsSold: { type: Number, default: 10 }, // New field for easier ticket tracking
   raffleItems: [{ type: mongoose.Schema.Types.ObjectId, ref: 'RaffleItem' }],
   participants: [
     {

@@ -96,7 +96,7 @@ const clearCart = async (req, res) => {
   }
 };
 
-// ✅ Export functions correctly
+
 module.exports = {
   getCart,
   addToCart,

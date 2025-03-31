@@ -8,7 +8,8 @@ const {
   getRaffleById,
   updateRaffle,
   deleteRaffle,
-  getRaffleWinningChance
+  getRaffleWinningChance,
+  purchaseTickets
 } = require('../controllers/raffleController');
 
 const router = express.Router();
@@ -21,5 +22,6 @@ router.get('/raffles/:id', authMiddleware, getRaffleById);
 router.put('/raffles/:id', authMiddleware, updateRaffle);
 router.delete('/raffles/:id', authMiddleware, deleteRaffle);
 router.get('/raffles/:raffleId/winning-chance/:userId', authMiddleware, getRaffleWinningChance);
+router.post('/raffles/:raffleId/purchase',authMiddleware, purchaseTickets);
 
 module.exports = router;

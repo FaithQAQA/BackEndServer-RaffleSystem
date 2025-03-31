@@ -1,6 +1,7 @@
 // controllers/raffleController.js
 const Raffle = require('../Models/Raffle');
 const mongoose = require('mongoose');
+const User = require('../Models/User'); // Ensure correct path
 
 // Create a new raffle
 const createRaffle = async (req, res) => {
@@ -16,34 +17,32 @@ const createRaffle = async (req, res) => {
 };
 
 
-const getRaffleWinningChance = async (raffleId, userId) => {
+const getRaffleWinningChance = async (req, res) => {
   try {
-    const raffle = await Raffle.findById(raffleId);
+    const { raffleId, userId } = req.params;
 
-    if (!raffle) {
-      throw new Error('Raffle not found');
+    if (!mongoose.Types.ObjectId.isValid(raffleId) || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: "Invalid raffleId or userId format" });
     }
 
-    // Calculate total tickets bought for the raffle
-    const totalTickets = raffle.participants.reduce((sum, participant) => sum + participant.ticketsBought, 0);
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) {
+      return res.status(404).json({ error: "Raffle not found" });
+    }
 
-    // Get the user's tickets for this raffle
-    const user = raffle.participants.find(p => p.userId.toString() === userId.toString());
-    const userTickets = user ? user.ticketsBought : 0;
+    const participant = raffle.participants.find(p => p.userId.equals(userId));
+    const userTicketCount = participant ? participant.ticketsBought : 0;
+    const totalTickets = raffle.totalTicketsSold;
 
-    // Calculate winning chance
-    const winningChance = totalTickets > 0 ? (userTickets / totalTickets) * 100 : 0;
+    const winningChance = totalTickets > 0 ? (userTicketCount / totalTickets) * 100 : 0;
 
-    return {
-      totalTickets,
-      userTickets,
-      winningChance: winningChance.toFixed(2) // Round to 2 decimal places
-    };
+    res.json({ totalTickets, userTickets: userTicketCount, winningChance });
   } catch (error) {
-    console.error('Error calculating winning chance:', error.message);
-    return null;
+    console.error("Error calculating winning chance:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 };
+
 
 
 // Fetch all raffles
@@ -65,6 +64,39 @@ const getRecentRaffles = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+
+const purchaseTickets = async (req, res) => {
+  try {
+    const { raffleId, userId, ticketsBought } = req.body;
+
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) return res.status(404).json({ error: "Raffle not found" });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Update total ticket count in Raffle model
+    raffle.totalTicketsSold += ticketsBought;
+    await raffle.save();
+
+    // Update user's ticket entry in participants
+    const participantIndex = raffle.participants.findIndex(p => p.userId.equals(userId));
+    if (participantIndex !== -1) {
+      raffle.participants[participantIndex].ticketsBought += ticketsBought;
+    } else {
+      raffle.participants.push({ userId, ticketsBought });
+    }
+    
+    await raffle.save();
+
+    res.json({ message: "Tickets purchased successfully", totalTicketsSold: raffle.totalTicketsSold });
+  } catch (error) {
+    console.error("Error purchasing tickets:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
 
 // Fetch a single raffle by ID
 const getRaffleById = async (req, res) => {
@@ -142,5 +174,6 @@ module.exports = {
   getRaffleById,
   updateRaffle,
   deleteRaffle,
-  getRaffleWinningChance
+  getRaffleWinningChance,
+  purchaseTickets
 };
