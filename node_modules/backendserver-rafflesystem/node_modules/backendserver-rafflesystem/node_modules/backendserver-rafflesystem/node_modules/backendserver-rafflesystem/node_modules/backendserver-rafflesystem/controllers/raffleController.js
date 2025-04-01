@@ -69,8 +69,8 @@ const getRecentRaffles = async (req, res) => {
 const purchaseTickets = async (req, res) => {
   try {
     const { raffleId, userId, ticketsBought } = req.body;
-
-    const raffle = await Raffle.findById(raffleId);
+     const raffleIds = req.params.raffleId
+    const raffle = await Raffle.findById(raffleIds);
     if (!raffle) return res.status(404).json({ error: "Raffle not found" });
 
     const user = await User.findById(userId);
