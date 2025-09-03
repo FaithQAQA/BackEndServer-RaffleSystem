@@ -14,7 +14,6 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// 📌 Register User
 const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
 
@@ -23,16 +22,10 @@ const registerUser = async (req, res) => {
 
     let user = await User.findOne({ email });
     if (user) {
-      console.log("❌ [REGISTER] User already exists:", email);
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // ✅ Uncomment this if you want password validation
-    /*
-    if (password.length < 8 || !/\d/.test(password) || !/[!@#$%^&*]/.test(password)) {
-      return res.status(400).json({ message: 'Password must be at least 8 characters long, contain a number and a special character' });
-    }
-    */
+ 
 
     // Hash password
     console.log("🔹 [REGISTER] Hashing password...");
@@ -51,7 +44,6 @@ const registerUser = async (req, res) => {
     });
 
     await user.save();
-    console.log("✅ [REGISTER] User saved:", user.email);
 
     // Construct verification link
     const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
@@ -88,7 +80,6 @@ const registerUser = async (req, res) => {
   }
 };
 
-// 📌 Verify Email
 const verifyEmail = async (req, res) => {
   const { token } = req.query;
 
@@ -104,7 +95,6 @@ const verifyEmail = async (req, res) => {
     user.emailVerified = true;
     user.verificationToken = null;
     await user.save();
-    console.log("✅ [VERIFY] Email verified for:", user.email);
 
     res.json({ message: 'Email verified successfully! You can now log in.' });
   } catch (err) {
@@ -115,7 +105,6 @@ const verifyEmail = async (req, res) => {
 
 
 
-// 📌 Forgot Password
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -199,7 +188,6 @@ const resetPassword = async (req, res) => {
 };
 
 
-// 📌 Login User (Require Email Verification)
 const loginUser = async (req, res) => {
   console.log("🔹 [LOGIN] Request received:", req.body);
 
@@ -229,11 +217,9 @@ const loginUser = async (req, res) => {
     // Check password
     const isMatch = await bcrypt.compare(req.body.password, user.password);
     if (!isMatch) {
-      console.log("❌ [LOGIN] Incorrect password");
       user.failedLoginAttempts += 1;
 
       if (user.failedLoginAttempts >= 3) {
-        console.log("❌ [LOGIN] Locking account due to failed attempts");
         user.isLocked = true;
         user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
       }
@@ -249,13 +235,12 @@ const loginUser = async (req, res) => {
     await user.save();
 
     // Generate JWT token
-    console.log("✅ [LOGIN] Login successful! Generating token...");
     const payload = { id: user._id, isAdmin: user.isAdmin };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
 
     res.json({ message: "Login successful!", token, isAdmin: user.isAdmin, id: user._id  });
   } catch (err) {
-    console.error("❌ [LOGIN] Server error:", err);
+    console.error(" Server error:", err);
     res.status(500).json({ type: "server", message: "Server error" });
   }
 };

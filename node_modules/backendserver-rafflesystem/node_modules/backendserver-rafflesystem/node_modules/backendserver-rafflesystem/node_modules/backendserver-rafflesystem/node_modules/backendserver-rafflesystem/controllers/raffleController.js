@@ -167,6 +167,63 @@ const deleteRaffle = async (req, res) => {
 };
 
 
+// Pick winner for a raffle
+const pickWinner = async (req, res) => {
+  try {
+    const { raffleId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(raffleId)) {
+      return res.status(400).json({ message: "Invalid raffle ID" });
+    }
+
+    const raffle = await Raffle.findById(raffleId).populate("participants.userId", "name email");
+    if (!raffle) {
+      return res.status(404).json({ message: "Raffle not found" });
+    }
+
+    // Check if raffle has ended
+    const now = new Date();
+    if (now < raffle.endDate) {
+      return res.status(400).json({ message: "Raffle has not ended yet" });
+    }
+
+    if (!raffle.participants || raffle.participants.length === 0) {
+      return res.status(400).json({ message: "No participants in this raffle" });
+    }
+
+    // Weighted random selection based on ticketsBought
+    let ticketPool = [];
+    raffle.participants.forEach(p => {
+      for (let i = 0; i < p.ticketsBought; i++) {
+        ticketPool.push(p.userId);
+      }
+    });
+
+    const winnerIndex = Math.floor(Math.random() * ticketPool.length);
+    const winner = ticketPool[winnerIndex];
+
+    // Save winner in raffle document
+    raffle.winner = winner._id || winner;
+    raffle.status = "completed";
+    await raffle.save();
+
+    res.json({
+      message: "Winner selected successfully",
+      winner: {
+        id: winner._id,
+        name: winner.name,
+        email: winner.email
+      }
+    });
+
+  } catch (error) {
+    console.error("Error picking raffle winner:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+
+
 module.exports = {
   createRaffle,
   getAllRaffles,
@@ -175,5 +232,6 @@ module.exports = {
   updateRaffle,
   deleteRaffle,
   getRaffleWinningChance,
-  purchaseTickets
+  purchaseTickets,
+  pickWinner
 };

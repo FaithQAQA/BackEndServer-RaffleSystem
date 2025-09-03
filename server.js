@@ -1,6 +1,7 @@
 // server.js
 const app = require('./app');
 const dotenv = require('dotenv');
+require('./jobs/raffleScheduler');  // This will start the cron job
 
 dotenv.config();
 
