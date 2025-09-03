@@ -2,6 +2,10 @@
 const Raffle = require('../Models/Raffle');
 const mongoose = require('mongoose');
 const User = require('../Models/User'); // Ensure correct path
+const nodemailer = require("nodemailer");
+
+
+
 
 // Create a new raffle
 const createRaffle = async (req, res) => {
@@ -54,6 +58,46 @@ const getAllRaffles = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+
+// Fetch all raffles a user has entered
+const getUserRaffles = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    // Find raffles where userId exists in participants array
+    const raffles = await Raffle.find({ "participants.userId": userId })
+      .sort({ createdAt: -1 })
+      .populate("winner", "name email") // get winner info
+      .populate("participants.userId", "name email"); // get participants info
+
+    // Add a field showing if the current user won
+    const userRaffles = raffles.map(r => {
+      const didUserWin = r.winner && r.winner._id.toString() === userId;
+      return {
+        _id: r._id,
+        title: r.title,
+        description: r.description,
+        status: r.status,
+        endDate: r.endDate,
+        totalTicketsSold: r.totalTicketsSold,
+        ticketsBought: r.participants.find(p => p.userId._id.toString() === userId)?.ticketsBought || 0,
+        winner: r.winner ? { id: r.winner._id, name: r.winner.name, email: r.winner.email } : null,
+        didUserWin
+      };
+    });
+
+    res.json(userRaffles);
+  } catch (err) {
+    console.error("Error fetching user raffles:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 
 // Fetch recent activity (last 3 raffles)
 const getRecentRaffles = async (req, res) => {
@@ -233,5 +277,6 @@ module.exports = {
   deleteRaffle,
   getRaffleWinningChance,
   purchaseTickets,
-  pickWinner
+  pickWinner,
+  getUserRaffles
 };

@@ -1,6 +1,30 @@
 const cron = require('node-cron');
 const Raffle = require('../Models/Raffle');
 const mongoose = require('mongoose');
+const nodemailer = require("nodemailer");
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER, // set in .env
+    pass: process.env.EMAIL_PASS, // app password for Gmail
+  },
+});
+
+async function sendWinnerEmail(user, raffle) {
+  try {
+    await transporter.sendMail({
+      from: `"Raffle App" <${process.env.EMAIL_USER}>`,
+      to: user.email,
+      subject: `🎉 Congratulations! You won the raffle: ${raffle.title}`,
+      text: `Hi ${user.username},\n\nYou won the raffle "${raffle.title}"! 🎊\n\nDescription: ${raffle.description}\n\nWe’ll contact you soon for prize details.\n\nThanks for playing!`,
+    });
+
+    console.log(`📩 Email sent to ${user.email} for raffle "${raffle.title}"`);
+  } catch (err) {
+    console.error("❌ Error sending email:", err);
+  }
+}
 
 // This should call the same logic as your pickWinner method
 const pickWinner = async (raffle) => {
@@ -14,14 +38,21 @@ const pickWinner = async (raffle) => {
     }
   });
 
-  const winnerIndex = Math.floor(Math.random() * ticketPool.length);
-  const winner = ticketPool[winnerIndex];
+const winnerId = ticketPool[Math.floor(Math.random() * ticketPool.length)];
 
-  raffle.winner = winner;
+  // Fetch full winner user info
+  const User = require("../Models/User");
+  const winnerUser = await User.findById(winnerId);
+
+  // Save winner to raffle
+  raffle.winner = winnerUser._id;
   raffle.status = "completed";
   await raffle.save();
 
-  console.log(`✅ Winner selected for raffle "${raffle.title}": ${winner}`);
+  console.log(`✅ Winner selected for raffle "${raffle.title}": ${winnerUser.email}`);
+
+  // Send winner email
+  await sendWinnerEmail(winnerUser, raffle);
 };
 
 // Run every minute (adjust timing as needed)
@@ -42,3 +73,4 @@ cron.schedule('* * * * *', async () => {
     console.error("❌ Error in raffle scheduler:", err);
   }
 });
+module.exports = { sendWinnerEmail };
