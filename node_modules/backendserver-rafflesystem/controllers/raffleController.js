@@ -3,7 +3,7 @@ const Raffle = require('../Models/Raffle');
 const mongoose = require('mongoose');
 const User = require('../Models/User'); // Ensure correct path
 const nodemailer = require("nodemailer");
-
+const Order = require("../Models/Order");
 
 
 
@@ -112,29 +112,48 @@ const getRecentRaffles = async (req, res) => {
 
 const purchaseTickets = async (req, res) => {
   try {
-    const { raffleId, userId, ticketsBought } = req.body;
-     const raffleIds = req.params.raffleId
-    const raffle = await Raffle.findById(raffleIds);
+    const { userId, ticketsBought } = req.body;
+    const raffleId = req.params.raffleId;
+
+    const raffle = await Raffle.findById(raffleId);
     if (!raffle) return res.status(404).json({ error: "Raffle not found" });
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    // Calculate cost (assuming raffle has ticketPrice)
+    const amount = (raffle.ticketPrice || 0) * ticketsBought;
+
     // Update total ticket count in Raffle model
     raffle.totalTicketsSold += ticketsBought;
-    await raffle.save();
 
     // Update user's ticket entry in participants
-    const participantIndex = raffle.participants.findIndex(p => p.userId.equals(userId));
+    const participantIndex = raffle.participants.findIndex((p) =>
+      p.userId.equals(userId)
+    );
     if (participantIndex !== -1) {
       raffle.participants[participantIndex].ticketsBought += ticketsBought;
     } else {
       raffle.participants.push({ userId, ticketsBought });
     }
-    
+
     await raffle.save();
 
-    res.json({ message: "Tickets purchased successfully", totalTicketsSold: raffle.totalTicketsSold });
+    const order = new Order({
+      userId,
+      raffleId,
+      ticketsBought,
+      amount,
+      status: "completed",
+    });
+    await order.save();
+
+    res.json({
+      message: "Tickets purchased successfully",
+      totalTicketsSold: raffle.totalTicketsSold,
+      orderId: order._id,
+      amount,
+    });
   } catch (error) {
     console.error("Error purchasing tickets:", error);
     res.status(500).json({ error: "Internal Server Error" });
@@ -266,6 +285,36 @@ const pickWinner = async (req, res) => {
   }
 };
 
+async function updateRaffleStatuses() {
+  const now = new Date();
+
+  try {
+    const raffles = await Raffle.find();
+
+    for (let raffle of raffles) {
+      let newStatus = raffle.status;
+
+      if (now < raffle.startDate) {
+        newStatus = 'upcoming'; // not started yet
+      } else if (now >= raffle.startDate && now <= raffle.endDate) {
+        newStatus = 'active'; // currently running
+      } else if (now > raffle.endDate) {
+        newStatus = 'completed'; // already ended
+      }
+
+      if (raffle.status !== newStatus) {
+        raffle.status = newStatus;
+        await raffle.save();
+        console.log(`Updated raffle "${raffle.title}" to status: ${newStatus}`);
+      }
+    }
+
+    console.log('Raffle statuses updated successfully.');
+  } catch (err) {
+    console.error('Error updating raffle statuses:', err);
+  }
+}
+
 
 
 module.exports = {
@@ -278,5 +327,6 @@ module.exports = {
   getRaffleWinningChance,
   purchaseTickets,
   pickWinner,
-  getUserRaffles
+  getUserRaffles,
+  updateRaffleStatuses
 };

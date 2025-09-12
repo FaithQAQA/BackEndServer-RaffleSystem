@@ -2,7 +2,6 @@ const cron = require('node-cron');
 const Raffle = require('../Models/Raffle');
 const mongoose = require('mongoose');
 const nodemailer = require("nodemailer");
-
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -73,4 +72,40 @@ cron.schedule('* * * * *', async () => {
     console.error("❌ Error in raffle scheduler:", err);
   }
 });
-module.exports = { sendWinnerEmail };
+
+
+async function updateRaffleStatuses() {
+  const now = new Date();
+
+  try {
+    const raffles = await Raffle.find();
+
+    for (let raffle of raffles) {
+      let newStatus = raffle.status;
+
+      if (now < raffle.startDate) {
+        newStatus = 'upcoming';
+      } else if (now >= raffle.startDate && now <= raffle.endDate) {
+        newStatus = 'active';
+      } else if (now > raffle.endDate) {
+        newStatus = 'completed';
+      }
+
+      if (raffle.status !== newStatus) {
+        raffle.status = newStatus;
+        await raffle.save();
+        console.log(`✅ Updated raffle "${raffle.title}" to status: ${newStatus}`);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error updating raffle statuses:', err);
+  }
+}
+
+// Run every minute
+cron.schedule('* * * * *', () => {
+  console.log('⏰ Running raffle status check...');
+  updateRaffleStatuses();
+});
+
+module.exports = { sendWinnerEmail, updateRaffleStatuses };
