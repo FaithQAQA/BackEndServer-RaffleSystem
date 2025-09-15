@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-const User = require('../Models/User'); // Ensure correct path
+const User = require('../Models/User'); 
 
 require('dotenv').config();
 
@@ -18,7 +18,7 @@ const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
 
   try {
-    console.log("🔹 [REGISTER] Incoming request:", req.body);
+    console.log(" REGISTER Incoming request:", req.body);
 
     let user = await User.findOne({ email });
     if (user) {
@@ -28,7 +28,7 @@ const registerUser = async (req, res) => {
  
 
     // Hash password
-    console.log("🔹 [REGISTER] Hashing password...");
+    console.log(" REGISTER Hashing password...");
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Generate verification token
@@ -51,7 +51,7 @@ const registerUser = async (req, res) => {
     
     // Send verification email
     try {
-      console.log("🔹 [REGISTER] Sending verification email to:", email);
+      console.log(" REGISTER Sending verification email to:", email);
 
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
@@ -67,15 +67,15 @@ const registerUser = async (req, res) => {
         `,
       });
 
-      console.log("✅ [REGISTER] Verification email sent.");
+      console.log(" REGISTER Verification email sent.");
     } catch (emailError) {
-      console.error("❌ [REGISTER] Error sending email:", emailError);
+      console.error(" REGISTER Error sending email:", emailError);
       return res.status(201).json({ message: 'User registered, but email sending failed.' });
     }
 
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
   } catch (err) {
-    console.error("❌ [REGISTER] Server error:", err);
+    console.error(" REGISTER Server error:", err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
@@ -84,11 +84,11 @@ const verifyEmail = async (req, res) => {
   const { token } = req.query;
 
   try {
-    console.log("🔹 [VERIFY] Token received:", token);
+    console.log(" VERIFY Token received:", token);
     const user = await User.findOne({ verificationToken: token });
 
     if (!user) {
-      console.log("❌ [VERIFY] Invalid token");
+      console.log(" [VERIFY] Invalid token");
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
 
@@ -98,7 +98,7 @@ const verifyEmail = async (req, res) => {
 
     res.json({ message: 'Email verified successfully! You can now log in.' });
   } catch (err) {
-    console.error("❌ [VERIFY] Server error:", err);
+    console.error(" VERIFY Server error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -140,7 +140,7 @@ const forgotPassword = async (req, res) => {
 
     res.json({ message: 'Password reset link sent to your email.' });
   } catch (err) {
-    console.error("❌ [FORGOT PASSWORD] Server error:", err);
+    console.error(" FORGOT PASSWORD Server error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -189,24 +189,24 @@ const resetPassword = async (req, res) => {
 
 
 const loginUser = async (req, res) => {
-  console.log("🔹 [LOGIN] Request received:", req.body);
+  console.log("LOGIN Request received:", req.body);
 
   try {
     const user = await User.findOne({ email: req.body.email });
     if (!user) {
-      console.log("❌ [LOGIN] User not found:", req.body.email);
+      console.log(" LOGIN User not found:", req.body.email);
       return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
     // Require email verification unless admin
     if (!user.emailVerified && !user.isAdmin) {
-      console.log("❌ [LOGIN] Email not verified");
+      console.log(" LOGIN Email not verified");
       return res.status(400).json({ type: "unverified", message: "Please verify your email before logging in." });
     }
 
     // Handle account lock
     if (user.isLocked && user.lockUntil > Date.now()) {
-      console.log(`❌ [LOGIN] Account locked until: ${new Date(user.lockUntil).toLocaleString()}`);
+      console.log(` LOGIN Account locked until: ${new Date(user.lockUntil).toLocaleString()}`);
       return res.status(400).json({ 
         type: "locked", 
         message: `Account locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,

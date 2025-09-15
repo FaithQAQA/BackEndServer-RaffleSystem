@@ -9,7 +9,7 @@ const raffleSchema = new mongoose.Schema({
   category: { type: String, required: true },
   status: { type: String, enum: ['active', 'completed', 'upcoming'], default: 'upcoming' }, 
   raised: { type: Number, default: 0 },
-  totalTicketsSold: { type: Number, default: 0 }, // Start at 0 instead of 10
+  totalTicketsSold: { type: Number, default: 0 }, 
   raffleItems: [{ type: mongoose.Schema.Types.ObjectId, ref: 'RaffleItem' }],
   participants: [
     {

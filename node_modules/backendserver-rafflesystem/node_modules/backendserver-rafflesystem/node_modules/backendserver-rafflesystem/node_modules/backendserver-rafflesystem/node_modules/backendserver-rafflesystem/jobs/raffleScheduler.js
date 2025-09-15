@@ -19,9 +19,9 @@ async function sendWinnerEmail(user, raffle) {
       text: `Hi ${user.username},\n\nYou won the raffle "${raffle.title}"! 🎊\n\nDescription: ${raffle.description}\n\nWe’ll contact you soon for prize details.\n\nThanks for playing!`,
     });
 
-    console.log(`📩 Email sent to ${user.email} for raffle "${raffle.title}"`);
+    console.log(` Email sent to ${user.email} for raffle "${raffle.title}"`);
   } catch (err) {
-    console.error("❌ Error sending email:", err);
+    console.error(" Error sending email:", err);
   }
 }
 
@@ -48,7 +48,7 @@ const winnerId = ticketPool[Math.floor(Math.random() * ticketPool.length)];
   raffle.status = "completed";
   await raffle.save();
 
-  console.log(`✅ Winner selected for raffle "${raffle.title}": ${winnerUser.email}`);
+  console.log(` Winner selected for raffle "${raffle.title}": ${winnerUser.email}`);
 
   // Send winner email
   await sendWinnerEmail(winnerUser, raffle);
@@ -56,7 +56,7 @@ const winnerId = ticketPool[Math.floor(Math.random() * ticketPool.length)];
 
 // Run every minute (adjust timing as needed)
 cron.schedule('* * * * *', async () => {
-  console.log("🔍 Checking raffles...");
+  console.log(" Checking raffles...");
 
   try {
     // Find raffles that ended but are still active
@@ -69,7 +69,7 @@ cron.schedule('* * * * *', async () => {
       await pickWinner(raffle);
     }
   } catch (err) {
-    console.error("❌ Error in raffle scheduler:", err);
+    console.error(" Error in raffle scheduler:", err);
   }
 });
 
@@ -94,17 +94,17 @@ async function updateRaffleStatuses() {
       if (raffle.status !== newStatus) {
         raffle.status = newStatus;
         await raffle.save();
-        console.log(`✅ Updated raffle "${raffle.title}" to status: ${newStatus}`);
+        console.log(` Updated raffle "${raffle.title}" to status: ${newStatus}`);
       }
     }
   } catch (err) {
-    console.error('❌ Error updating raffle statuses:', err);
+    console.error(' Error updating raffle statuses:', err);
   }
 }
 
 // Run every minute
 cron.schedule('* * * * *', () => {
-  console.log('⏰ Running raffle status check...');
+  console.log(' Running raffle status check...');
   updateRaffleStatuses();
 });
 

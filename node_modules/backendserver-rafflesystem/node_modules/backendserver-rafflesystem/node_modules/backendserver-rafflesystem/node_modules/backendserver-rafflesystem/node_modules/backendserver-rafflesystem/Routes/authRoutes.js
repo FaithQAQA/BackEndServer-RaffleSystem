@@ -4,8 +4,8 @@ const {
   registerUser, 
   loginUser, 
   verifyEmail, 
-  forgotPassword,   // Import forgotPassword function
-  resetPassword     // Import resetPassword function
+  forgotPassword,   
+  resetPassword     
 } = require('../controllers/authController');
 
 const router = express.Router();
