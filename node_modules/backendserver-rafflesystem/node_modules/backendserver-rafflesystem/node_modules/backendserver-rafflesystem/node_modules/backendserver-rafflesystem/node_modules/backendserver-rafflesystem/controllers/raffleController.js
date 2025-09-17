@@ -1,10 +1,100 @@
-// controllers/raffleController.js
 const Raffle = require('../Models/Raffle');
+const User = require('../Models/User');
+const Order = require('../Models/Order');
 const mongoose = require('mongoose');
-const User = require('../Models/User'); // Ensure correct path
-const nodemailer = require("nodemailer");
-const Order = require("../Models/Order");
+const dotenv = require('dotenv');
+dotenv.config();
 
+const { Client, Environment } = require('square');
+
+// Initialize Square client
+const client = new Client({
+  accessToken: process.env.SQUARE_ACCESS_TOKEN,
+  environment: process.env.NODE_ENV === 'production' ? Environment.Production : Environment.Sandbox,
+});
+
+// Purchase tickets
+const purchaseTickets = async (req, res) => {
+  try {
+    const { userId, ticketsBought, paymentToken } = req.body;
+    const raffleId = req.params.raffleId;
+
+    // Validate raffle
+    const raffle = await Raffle.findById(raffleId);
+    if (!raffle) return res.status(404).json({ error: "Raffle not found" });
+
+    // Validate user
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Calculate total cost in cents
+    const amount = (raffle.price || 0) * ticketsBought;
+    if (amount <= 0) return res.status(400).json({ error: "Invalid ticket amount" });
+    const amountCents = Math.round(amount * 100);
+
+    // Use paymentsApi in v39
+    const paymentsApi = client.paymentsApi;
+    const paymentResponse = await paymentsApi.createPayment({
+      sourceId: paymentToken,
+      idempotencyKey: require('crypto').randomUUID(),
+      amountMoney: {
+        amount: amountCents,
+        currency: "CAD",
+      },
+    });
+
+    // Safely access payment object
+    const payment = paymentResponse?.result?.payment;
+    if (!payment) {
+      console.error("Payment object missing in response:", paymentResponse);
+      return res.status(500).json({ error: "Payment failed" });
+    }
+
+    if (payment.status !== "COMPLETED") {
+      return res.status(400).json({ error: "Payment not completed" });
+    }
+
+    // Update raffle participants
+    raffle.totalTicketsSold += ticketsBought;
+    const participantIndex = raffle.participants.findIndex((p) =>
+      p.userId.equals(userId)
+    );
+    if (participantIndex !== -1) {
+      raffle.participants[participantIndex].ticketsBought += ticketsBought;
+    } else {
+      raffle.participants.push({ userId, ticketsBought });
+    }
+    await raffle.save();
+
+    // Save order
+    const order = new Order({
+      userId,
+      raffleId,
+      ticketsBought,
+      amount,
+      status: "completed",
+      paymentId: payment.id,
+    });
+    await order.save();
+
+    res.json({
+      message: "Tickets purchased successfully",
+      totalTicketsSold: raffle.totalTicketsSold,
+      orderId: order._id,
+      amount,
+    });
+
+  } catch (error) {
+    console.error("Error purchasing tickets:", error);
+
+    // Detailed error message for Square API errors
+    if (error?.response) {
+      console.error("Square API response:", error.response.body);
+    }
+
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
 
 
 // Create a new raffle
@@ -110,55 +200,7 @@ const getRecentRaffles = async (req, res) => {
 };
 
 
-const purchaseTickets = async (req, res) => {
-  try {
-    const { userId, ticketsBought } = req.body;
-    const raffleId = req.params.raffleId;
 
-    const raffle = await Raffle.findById(raffleId);
-    if (!raffle) return res.status(404).json({ error: "Raffle not found" });
-
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    // Calculate cost (assuming raffle has ticketPrice)
-    const amount = (raffle.ticketPrice || 0) * ticketsBought;
-
-    // Update total ticket count in Raffle model
-    raffle.totalTicketsSold += ticketsBought;
-
-    // Update user's ticket entry in participants
-    const participantIndex = raffle.participants.findIndex((p) =>
-      p.userId.equals(userId)
-    );
-    if (participantIndex !== -1) {
-      raffle.participants[participantIndex].ticketsBought += ticketsBought;
-    } else {
-      raffle.participants.push({ userId, ticketsBought });
-    }
-
-    await raffle.save();
-
-    const order = new Order({
-      userId,
-      raffleId,
-      ticketsBought,
-      amount,
-      status: "completed",
-    });
-    await order.save();
-
-    res.json({
-      message: "Tickets purchased successfully",
-      totalTicketsSold: raffle.totalTicketsSold,
-      orderId: order._id,
-      amount,
-    });
-  } catch (error) {
-    console.error("Error purchasing tickets:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-};
 
 
 // Fetch a single raffle by ID
