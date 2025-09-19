@@ -10,7 +10,7 @@ const { Client, Environment } = require('square');
 // Initialize Square client
 const client = new Client({
   accessToken: process.env.SQUARE_ACCESS_TOKEN,
-  environment: process.env.NODE_ENV === 'production' ? Environment.Production : Environment.Sandbox,
+    environment: Environment.Sandbox,             // Force sandbox ? Environment.Production : Environment.Sandbox,
 });
 
 // Purchase tickets
