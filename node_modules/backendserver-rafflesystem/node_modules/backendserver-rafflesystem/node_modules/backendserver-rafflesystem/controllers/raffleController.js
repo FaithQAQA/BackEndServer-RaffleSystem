@@ -1,3 +1,4 @@
+// Import required models and dependencies
 const Raffle = require('../Models/Raffle');
 const User = require('../Models/User');
 const Order = require('../Models/Order');
@@ -7,66 +8,69 @@ dotenv.config();
 
 const { Client, Environment } = require('square');
 
-// Initialize Square client
+// Initialize Square client (using Sandbox for testing)
 const client = new Client({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN,
-    environment: Environment.Sandbox,             // Force sandbox ? Environment.Production : Environment.Sandbox,
+  accessToken: process.env.SQUARE_ACCESS_TOKEN, // Securely stored in environment variable
+  environment: Environment.Sandbox,             
 });
 
-// Purchase tickets
+// ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
   try {
     const { userId, ticketsBought, paymentToken } = req.body;
     const raffleId = req.params.raffleId;
 
-    // Validate raffle
+    // Validate raffle existence
     const raffle = await Raffle.findById(raffleId);
     if (!raffle) return res.status(404).json({ error: "Raffle not found" });
 
-    // Validate user
+    // Validate user existence
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    // Calculate total cost in cents
+    // Calculate purchase amount
     const amount = (raffle.price || 0) * ticketsBought;
     if (amount <= 0) return res.status(400).json({ error: "Invalid ticket amount" });
-    const amountCents = Math.round(amount * 100);
+    const amountCents = Math.round(amount * 100); // Square requires amount in cents
 
-    // Use paymentsApi in v39
+    // Process payment via Square API
     const paymentsApi = client.paymentsApi;
     const paymentResponse = await paymentsApi.createPayment({
-      sourceId: paymentToken,
-      idempotencyKey: require('crypto').randomUUID(),
+      sourceId: paymentToken, // Tokenized payment source (e.g., card nonce)
+      idempotencyKey: require('crypto').randomUUID(), // Prevents duplicate charges
       amountMoney: {
         amount: amountCents,
         currency: "CAD",
       },
     });
 
-    // Safely access payment object
+    // Extract payment info
     const payment = paymentResponse?.result?.payment;
     if (!payment) {
       console.error("Payment object missing in response:", paymentResponse);
       return res.status(500).json({ error: "Payment failed" });
     }
 
+    // Ensure payment was successful
     if (payment.status !== "COMPLETED") {
       return res.status(400).json({ error: "Payment not completed" });
     }
 
-    // Update raffle participants
+    // Update raffle with new tickets bought
     raffle.totalTicketsSold += ticketsBought;
     const participantIndex = raffle.participants.findIndex((p) =>
       p.userId.equals(userId)
     );
     if (participantIndex !== -1) {
+      // User already exists in participants -> increment their tickets
       raffle.participants[participantIndex].ticketsBought += ticketsBought;
     } else {
+      // New participant -> add them
       raffle.participants.push({ userId, ticketsBought });
     }
     await raffle.save();
 
-    // Save order
+    // Save order record for tracking
     const order = new Order({
       userId,
       raffleId,
@@ -77,6 +81,7 @@ const purchaseTickets = async (req, res) => {
     });
     await order.save();
 
+    // Respond with success message
     res.json({
       message: "Tickets purchased successfully",
       totalTicketsSold: raffle.totalTicketsSold,
@@ -87,7 +92,7 @@ const purchaseTickets = async (req, res) => {
   } catch (error) {
     console.error("Error purchasing tickets:", error);
 
-    // Detailed error message for Square API errors
+    // If Square API returned an error, log details
     if (error?.response) {
       console.error("Square API response:", error.response.body);
     }
@@ -97,7 +102,7 @@ const purchaseTickets = async (req, res) => {
 };
 
 
-// Create a new raffle
+// ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
   const { title, description, startDate, endDate, price, category } = req.body;
 
@@ -111,23 +116,28 @@ const createRaffle = async (req, res) => {
 };
 
 
+// ======================= WINNING CHANCE =======================
 const getRaffleWinningChance = async (req, res) => {
   try {
     const { raffleId, userId } = req.params;
 
+    // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(raffleId) || !mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ error: "Invalid raffleId or userId format" });
     }
 
+    // Find raffle
     const raffle = await Raffle.findById(raffleId);
     if (!raffle) {
       return res.status(404).json({ error: "Raffle not found" });
     }
 
+    // Get user's ticket count
     const participant = raffle.participants.find(p => p.userId.equals(userId));
     const userTicketCount = participant ? participant.ticketsBought : 0;
     const totalTickets = raffle.totalTicketsSold;
 
+    // Calculate probability of winning
     const winningChance = totalTickets > 0 ? (userTicketCount / totalTickets) * 100 : 0;
 
     res.json({ totalTickets, userTickets: userTicketCount, winningChance });
@@ -138,11 +148,10 @@ const getRaffleWinningChance = async (req, res) => {
 };
 
 
-
-// Fetch all raffles
+// ======================= GET ALL RAFFLES =======================
 const getAllRaffles = async (req, res) => {
   try {
-    const raffles = await Raffle.find().sort({ createdAt: -1 });
+    const raffles = await Raffle.find().sort({ createdAt: -1 }); // Sort by newest first
     res.json(raffles);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -150,22 +159,23 @@ const getAllRaffles = async (req, res) => {
 };
 
 
-// Fetch all raffles a user has entered
+// ======================= GET USER'S RAFFLES =======================
 const getUserRaffles = async (req, res) => {
   try {
     const { userId } = req.params;
 
+    // Validate user ID
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ message: "Invalid user ID" });
     }
 
-    // Find raffles where userId exists in participants array
+    // Find raffles where user participated
     const raffles = await Raffle.find({ "participants.userId": userId })
       .sort({ createdAt: -1 })
-      .populate("winner", "name email") // get winner info
-      .populate("participants.userId", "name email"); // get participants info
+      .populate("winner", "name email") 
+      .populate("participants.userId", "name email");
 
-    // Add a field showing if the current user won
+    // Format raffles with user-specific info
     const userRaffles = raffles.map(r => {
       const didUserWin = r.winner && r.winner._id.toString() === userId;
       return {
@@ -189,7 +199,7 @@ const getUserRaffles = async (req, res) => {
 };
 
 
-// Fetch recent activity (last 3 raffles)
+// ======================= GET RECENT RAFFLES =======================
 const getRecentRaffles = async (req, res) => {
   try {
     const raffles = await Raffle.find().sort({ createdAt: -1 }).limit(3);
@@ -200,10 +210,7 @@ const getRecentRaffles = async (req, res) => {
 };
 
 
-
-
-
-// Fetch a single raffle by ID
+// ======================= GET RAFFLE BY ID =======================
 const getRaffleById = async (req, res) => {
   try {
     const raffle = await Raffle.findById(req.params.id);
@@ -216,22 +223,22 @@ const getRaffleById = async (req, res) => {
   }
 };
 
-// Update a raffle
+
+// ======================= UPDATE RAFFLE =======================
 const updateRaffle = async (req, res) => {
   try {
     const { title, description, startDate, endDate, price, category, status } = req.body;
 
-    // Validate ObjectId
+    // Validate raffle ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid raffle ID' });
     }
 
-    console.log('Updating raffle with data:', req.body); // Debugging
-
-    // Find and update raffle
+    // Find raffle to update
     const raffle = await Raffle.findById(req.params.id);
     if (!raffle) return res.status(404).json({ message: 'Raffle not found' });
 
+    // Update fields (fallback to existing if not provided)
     raffle.title = title || raffle.title;
     raffle.description = description || raffle.description;
     raffle.startDate = startDate ? new Date(startDate) : raffle.startDate;
@@ -249,10 +256,9 @@ const updateRaffle = async (req, res) => {
 };
 
 
-
+// ======================= DELETE RAFFLE =======================
 const deleteRaffle = async (req, res) => {
   try {
-    // Check if the provided ID is a valid MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid raffle ID' });
     }
@@ -262,17 +268,17 @@ const deleteRaffle = async (req, res) => {
       return res.status(404).json({ message: 'Raffle not found' });
     }
 
-    await Raffle.findByIdAndDelete(req.params.id); // Use this instead of `.remove()`
+    await Raffle.findByIdAndDelete(req.params.id);
     
     res.json({ message: 'Raffle deleted successfully' });
   } catch (err) {
-    console.error(err); // Log the error for debugging
+    console.error(err); 
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 
-// Pick winner for a raffle
+// ======================= PICK WINNER =======================
 const pickWinner = async (req, res) => {
   try {
     const { raffleId } = req.params;
@@ -286,7 +292,7 @@ const pickWinner = async (req, res) => {
       return res.status(404).json({ message: "Raffle not found" });
     }
 
-    // Check if raffle has ended
+    // Ensure raffle has ended
     const now = new Date();
     if (now < raffle.endDate) {
       return res.status(400).json({ message: "Raffle has not ended yet" });
@@ -296,7 +302,7 @@ const pickWinner = async (req, res) => {
       return res.status(400).json({ message: "No participants in this raffle" });
     }
 
-    // Weighted random selection based on ticketsBought
+    // Weighted random selection based on tickets bought
     let ticketPool = [];
     raffle.participants.forEach(p => {
       for (let i = 0; i < p.ticketsBought; i++) {
@@ -307,7 +313,7 @@ const pickWinner = async (req, res) => {
     const winnerIndex = Math.floor(Math.random() * ticketPool.length);
     const winner = ticketPool[winnerIndex];
 
-    // Save winner in raffle document
+    // Save winner and update raffle status
     raffle.winner = winner._id || winner;
     raffle.status = "completed";
     await raffle.save();
@@ -327,6 +333,8 @@ const pickWinner = async (req, res) => {
   }
 };
 
+
+// ======================= UPDATE RAFFLE STATUSES (Scheduled Job) =======================
 async function updateRaffleStatuses() {
   const now = new Date();
 
@@ -336,14 +344,16 @@ async function updateRaffleStatuses() {
     for (let raffle of raffles) {
       let newStatus = raffle.status;
 
+      // Determine status based on current date
       if (now < raffle.startDate) {
-        newStatus = 'upcoming'; // not started yet
+        newStatus = 'upcoming';
       } else if (now >= raffle.startDate && now <= raffle.endDate) {
-        newStatus = 'active'; // currently running
+        newStatus = 'active';
       } else if (now > raffle.endDate) {
-        newStatus = 'completed'; // already ended
+        newStatus = 'completed';
       }
 
+      // Only update if status actually changed
       if (raffle.status !== newStatus) {
         raffle.status = newStatus;
         await raffle.save();
@@ -358,7 +368,7 @@ async function updateRaffleStatuses() {
 }
 
 
-
+// ======================= EXPORT CONTROLLERS =======================
 module.exports = {
   createRaffle,
   getAllRaffles,

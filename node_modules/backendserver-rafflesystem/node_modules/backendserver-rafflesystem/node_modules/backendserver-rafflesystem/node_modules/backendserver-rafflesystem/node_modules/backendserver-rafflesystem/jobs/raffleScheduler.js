@@ -54,7 +54,7 @@ const winnerId = ticketPool[Math.floor(Math.random() * ticketPool.length)];
   await sendWinnerEmail(winnerUser, raffle);
 };
 
-// Run every minute (adjust timing as needed)
+// Run every minute 
 cron.schedule('* * * * *', async () => {
   console.log(" Checking raffles...");
 
