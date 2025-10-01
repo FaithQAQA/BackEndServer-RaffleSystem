@@ -5,7 +5,7 @@ const connectDB = require('./config/db');
 const authRoutes = require('./Routes/authRoutes');
 const raffleRoutes = require('./Routes/raffleRoutes');
 const CartRoutes= require ('./Routes/cartRoutes')
-
+const Orders = require('./Routes/orders');
 const app = express();
 
 // Middleware
@@ -16,7 +16,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api', raffleRoutes);
 app.use('/api/cart', CartRoutes);
-
+app.use('/api/orders', Orders); 
 // Connect to MongoDB
 connectDB();
 
