@@ -1,4 +1,3 @@
-// routes/raffleRoutes.js
 const express = require('express');
 const authMiddleware = require('../middleware/authMiddleware');
 const {
@@ -10,11 +9,12 @@ const {
   deleteRaffle,
   getRaffleWinningChance,
   purchaseTickets,
-  getUserRaffles
+  getUserRaffles,
+  exportRaffleCSV
 } = require('../controllers/raffleController');
-
+ 
 const router = express.Router();
-
+ 
 // Protected routes (require authentication)
 router.post('/raffles', authMiddleware, createRaffle);
 router.get('/raffles', authMiddleware, getAllRaffles);
@@ -25,5 +25,6 @@ router.delete('/raffles/:id', authMiddleware, deleteRaffle);
 router.get('/raffles/:raffleId/winning-chance/:userId', authMiddleware, getRaffleWinningChance);
 router.post('/raffles/:raffleId/purchase',authMiddleware, purchaseTickets);
 router.get("/user/:userId/raffles", getUserRaffles);
-
+router.get('/raffles/:id/export', authMiddleware, exportRaffleCSV);
+ 
 module.exports = router;
