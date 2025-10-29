@@ -7,7 +7,7 @@ const raffleRoutes = require('./Routes/raffleRoutes');
 const CartRoutes= require ('./Routes/cartRoutes')
 const Orders = require('./Routes/orders');
 const app = express();
-
+const userRoutes = require('./Routes/users');
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -17,6 +17,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api', raffleRoutes);
 app.use('/api/cart', CartRoutes);
 app.use('/api/orders', Orders); 
+app.use('/api', userRoutes);
 // Connect to MongoDB
 connectDB();
 

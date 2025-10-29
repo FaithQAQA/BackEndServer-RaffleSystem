@@ -3,8 +3,20 @@ const User = require('../Models/User');
 const Order = require('../Models/Order');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const nodemailer = require('nodemailer');
+
 const { Parser } = require('json2csv');
 dotenv.config();
+
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
  
 const { Client, Environment } = require('square');
  
@@ -17,45 +29,82 @@ const client = new Client({
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
   try {
-    const { userId, ticketsBought, paymentToken } = req.body;
+    const { userId, ticketsBought, paymentToken, includeTax = true } = req.body;
     const raffleId = req.params.raffleId;
- 
+
+    console.log(" PURCHASE Incoming request:", { userId, ticketsBought, raffleId });
+
     // Validate raffle existence
     const raffle = await Raffle.findById(raffleId);
-    if (!raffle) return res.status(404).json({ error: "Raffle not found" });
- 
+    if (!raffle) {
+      console.log(" PURCHASE Raffle not found:", raffleId);
+      return res.status(404).json({ error: "Raffle not found" });
+    }
+
     // Validate user existence
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: "User not found" });
- 
-    // Calculate purchase amount
-    const amount = (raffle.price || 0) * ticketsBought;
-    if (amount <= 0) return res.status(400).json({ error: "Invalid ticket amount" });
-    const amountCents = Math.round(amount * 100); // Square requires amount in cents
- 
+    if (!user) {
+      console.log(" PURCHASE User not found:", userId);
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Validate email address
+    if (!user.email || !user.emailVerified) {
+      console.log(" PURCHASE Email not verified:", user.email);
+      return res.status(400).json({ error: "Email verification required" });
+    }
+
+    // Calculate purchase amount WITH TAX
+    const taxRate = 0.13; // 13% tax
+    const baseAmount = (raffle.price || 0) * ticketsBought;
+    const taxAmount = Math.round(baseAmount * taxRate * 100) / 100;
+    const totalAmount = baseAmount + taxAmount;
+    
+    if (baseAmount <= 0) {
+      console.log(" PURCHASE Invalid ticket amount:", ticketsBought);
+      return res.status(400).json({ error: "Invalid ticket amount" });
+    }
+    
+    const amountCents = Math.round(totalAmount * 100); // Square requires amount in cents (WITH TAX)
+
+    console.log(" PURCHASE Payment breakdown:", {
+      baseAmount,
+      taxAmount,
+      totalAmount,
+      amountCents,
+      ticketsBought,
+      pricePerTicket: raffle.price
+    });
+
     // Process payment via Square API
     const paymentsApi = client.paymentsApi;
+    const idempotencyKey = require('crypto').randomUUID(); // Prevents duplicate charges
+    
+    console.log(" PURCHASE Processing payment...");
     const paymentResponse = await paymentsApi.createPayment({
       sourceId: paymentToken, // Tokenized payment source (e.g., card nonce)
-      idempotencyKey: require('crypto').randomUUID(), // Prevents duplicate charges
+      idempotencyKey: idempotencyKey,
       amountMoney: {
         amount: amountCents,
         currency: "CAD",
       },
     });
- 
+
     // Extract payment info
     const payment = paymentResponse?.result?.payment;
     if (!payment) {
-      console.error("Payment object missing in response:", paymentResponse);
+      console.error(" PURCHASE Payment object missing in response:", paymentResponse);
       return res.status(500).json({ error: "Payment failed" });
     }
- 
+
     // Ensure payment was successful
     if (payment.status !== "COMPLETED") {
+      console.log(" PURCHASE Payment not completed:", payment.status);
       return res.status(400).json({ error: "Payment not completed" });
     }
- 
+
+    console.log(" PURCHASE Payment successful:", payment.id);
+
     // Update raffle with new tickets bought
     raffle.totalTicketsSold += ticketsBought;
     const participantIndex = raffle.participants.findIndex((p) =>
@@ -69,38 +118,130 @@ const purchaseTickets = async (req, res) => {
       raffle.participants.push({ userId, ticketsBought });
     }
     await raffle.save();
- 
-    // Save order record for tracking
+
+    // Save order record for tracking (store both base and tax amounts)
     const order = new Order({
       userId,
       raffleId,
       ticketsBought,
-      amount,
+      amount: totalAmount, // Store total amount WITH tax
+      baseAmount: baseAmount, // Store base amount without tax
+      taxAmount: taxAmount, // Store tax amount
       status: "completed",
       paymentId: payment.id,
+      receiptSent: false, // Track email receipt status
     });
     await order.save();
- 
-    // Respond with success message
+
+    console.log(" PURCHASE Order saved:", order._id);
+
+    // Send receipt email (updated to show tax breakdown)
+    try {
+      console.log(" PURCHASE Sending receipt email to:", user.email);
+
+      const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
+      const orderLink = `${frontendUrl}/orders/${order._id}`;
+      
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
+        html: `
+          <p>Dear ${user.username},</p>
+          <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
+          
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
+            <h3 style="color: #333; margin-top: 0;">Order Details</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${payment.id}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${baseAmount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${taxAmount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${totalAmount.toFixed(2)} CAD</td>
+              </tr>
+            </table>
+          </div>
+
+          <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
+
+          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <strong>📧 Need Help?</strong>
+            <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
+          </div>
+
+          <p>Best regards,</p>
+          <p>Raffle System Team</p>
+        `,
+      });
+
+      console.log(" PURCHASE Receipt email sent successfully");
+      
+      // Update order with receipt status
+      order.receiptSent = true;
+      order.receiptSentAt = new Date();
+      await order.save();
+
+    } catch (emailError) {
+      console.error(" PURCHASE Error sending receipt email:", emailError);
+      // Log the failure but don't fail the purchase
+      order.receiptSent = false;
+      order.receiptError = emailError.message;
+      await order.save();
+      // Continue with success response - email failure shouldn't block purchase
+    }
+
+    // Respond with success message (include tax breakdown)
     res.json({
       message: "Tickets purchased successfully",
       totalTicketsSold: raffle.totalTicketsSold,
       orderId: order._id,
-      amount,
+      amount: totalAmount,
+      baseAmount: baseAmount,
+      taxAmount: taxAmount,
+      receiptEmail: user.email, // Confirm email address used
     });
- 
+
   } catch (error) {
-    console.error("Error purchasing tickets:", error);
- 
+    console.error(" PURCHASE Server error:", error);
+
     // If Square API returned an error, log details
     if (error?.response) {
-      console.error("Square API response:", error.response.body);
+      console.error(" PURCHASE Square API response:", error.response.body);
     }
- 
+
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
- 
  
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
