@@ -4,34 +4,91 @@ const Order = require('../Models/Order');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
-
 const { Parser } = require('json2csv');
+const crypto = require('crypto');
+
+// ======================= ✅ DIRECT REST API SETUP (NO SDK) =======================
 dotenv.config();
 
+class SquareDirectAPI {
+  constructor(accessToken, environment = 'sandbox') {
+    this.accessToken = accessToken;
+    this.baseUrl = environment === 'sandbox' 
+      ? 'https://connect.squareupsandbox.com' 
+      : 'https://connect.squareup.com';
+  }
 
+  async createPayment(paymentData) {
+    const response = await fetch(`${this.baseUrl}/v2/payments`, {
+      method: 'POST',
+      headers: {
+        'Square-Version': '2024-09-19',
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source_id: paymentData.sourceId,
+        idempotency_key: paymentData.idempotencyKey,
+        amount_money: {
+          amount: paymentData.amountMoney.amount,
+          currency: paymentData.amountMoney.currency,
+        },
+        app_fee_money: paymentData.appFeeMoney ? {
+          amount: paymentData.appFeeMoney.amount,
+          currency: paymentData.appFeeMoney.currency,
+        } : undefined,
+        autocomplete: paymentData.autocomplete,
+      })
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.errors?.[0]?.detail || 'Payment failed');
+    }
+    
+    return result;
+  }
+
+  async listLocations() {
+    const response = await fetch(`${this.baseUrl}/v2/locations`, {
+      method: 'GET',
+      headers: {
+        'Square-Version': '2024-09-19',
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.errors?.[0]?.detail || 'Failed to fetch locations');
+    }
+    
+    return result;
+  }
+}
+
+// Initialize Square API
+const squareAPI = new SquareDirectAPI(process.env.SQUARE_ACCESS_TOKEN, 'sandbox');
+
+// ======================= EMAIL TRANSPORTER =======================
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
-  secure: false, // Use TLS
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // Make sure this is an App Password
+    pass: process.env.EMAIL_PASS,
   },
-  connectionTimeout: 30000, // Increase timeouts
+  connectionTimeout: 30000,
   greetingTimeout: 30000,
   socketTimeout: 30000,
   tls: {
-    rejectUnauthorized: false // Bypass certificate validation issues
-  }
+    rejectUnauthorized: false,
+  },
 });
-
-const { SquareClient } = require('square');
-
-const client = new SquareClient({
-  token: process.env.SQUARE_ACCESS_TOKEN,
-  environment: 'sandbox',  // or 'production'
-});
-
 
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
@@ -72,7 +129,7 @@ const purchaseTickets = async (req, res) => {
       return res.status(400).json({ error: "Invalid ticket amount" });
     }
     
-    const amountCents = Math.round(totalAmount * 100); // Square requires amount in cents (WITH TAX)
+    const amountCents = Math.round(totalAmount * 100);
 
     console.log(" PURCHASE Payment breakdown:", {
       baseAmount,
@@ -83,178 +140,176 @@ const purchaseTickets = async (req, res) => {
       pricePerTicket: raffle.price
     });
 
-    // Process payment via Square API
-    const paymentsApi = client.paymentsApi;
-    const idempotencyKey = require('crypto').randomUUID(); // Prevents duplicate charges
+    // ✅ CORRECT: Process payment using direct REST API
+    const idempotencyKey = crypto.randomUUID();
     
     console.log(" PURCHASE Processing payment...");
-    const paymentResponse = await paymentsApi.createPayment({
-      sourceId: paymentToken, // Tokenized payment source (e.g., card nonce)
-      idempotencyKey: idempotencyKey,
-      amountMoney: {
-        amount: amountCents,
-        currency: "CAD",
-      },
-    });
-
-    // Extract payment info
-    const payment = paymentResponse?.result?.payment;
-    if (!payment) {
-      console.error(" PURCHASE Payment object missing in response:", paymentResponse);
-      return res.status(500).json({ error: "Payment failed" });
-    }
-
-    // Ensure payment was successful
-    if (payment.status !== "COMPLETED") {
-      console.log(" PURCHASE Payment not completed:", payment.status);
-      return res.status(400).json({ error: "Payment not completed" });
-    }
-
-    console.log(" PURCHASE Payment successful:", payment.id);
-
-    // Update raffle with new tickets bought
-    raffle.totalTicketsSold += ticketsBought;
-    const participantIndex = raffle.participants.findIndex((p) =>
-      p.userId.equals(userId)
-    );
-    if (participantIndex !== -1) {
-      // User already exists in participants -> increment their tickets
-      raffle.participants[participantIndex].ticketsBought += ticketsBought;
-    } else {
-      // New participant -> add them
-      raffle.participants.push({ userId, ticketsBought });
-    }
-    await raffle.save();
-
-    // Save order record for tracking (store both base and tax amounts)
-    const order = new Order({
-      userId,
-      raffleId,
-      ticketsBought,
-      amount: totalAmount, // Store total amount WITH tax
-      baseAmount: baseAmount, // Store base amount without tax
-      taxAmount: taxAmount, // Store tax amount
-      status: "completed",
-      paymentId: payment.id,
-      receiptSent: false, // Track email receipt status
-    });
-    await order.save();
-
-    console.log(" PURCHASE Order saved:", order._id);
-
-    // Send receipt email (updated to show tax breakdown)
+    
     try {
-      console.log(" PURCHASE Sending receipt email to:", user.email);
-
-      const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
-      const orderLink = `${frontendUrl}/orders/${order._id}`;
-      
-      // Verify transporter connection first
-      await transporter.verify();
-      console.log(" PURCHASE SMTP connection verified");
-
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: user.email,
-        subject: `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
-        html: `
-          <p>Dear ${user.username},</p>
-          <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
-          
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
-            <h3 style="color: #333; margin-top: 0;">Order Details</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${payment.id}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${baseAmount.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${taxAmount.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${totalAmount.toFixed(2)} CAD</td>
-              </tr>
-            </table>
-          </div>
-
-          <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
-
-          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <strong>📧 Need Help?</strong>
-            <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
-          </div>
-
-          <p>Best regards,</p>
-          <p>Raffle System Team</p>
-        `,
+      const paymentResult = await squareAPI.createPayment({
+        sourceId: paymentToken,
+        idempotencyKey: idempotencyKey,
+        amountMoney: {
+          amount: amountCents, // Note: No BigInt needed for direct API
+          currency: 'CAD',
+        },
+        autocomplete: true,
       });
 
-      console.log(" PURCHASE Receipt email sent successfully");
-      
-      // Update order with receipt status
-      order.receiptSent = true;
-      order.receiptSentAt = new Date();
+      // Extract payment info
+      const payment = paymentResult.payment;
+      if (!payment) {
+        console.error(" PURCHASE Payment object missing in response:", paymentResult);
+        return res.status(500).json({ error: "Payment failed" });
+      }
+
+      // Ensure payment was successful
+      if (payment.status !== 'COMPLETED') {
+        console.log(" PURCHASE Payment not completed:", payment.status);
+        return res.status(400).json({ error: "Payment not completed" });
+      }
+
+      console.log(" PURCHASE Payment successful:", payment.id);
+
+      // Update raffle with new tickets bought
+      raffle.totalTicketsSold += ticketsBought;
+      const participantIndex = raffle.participants.findIndex((p) =>
+        p.userId.equals(userId)
+      );
+      if (participantIndex !== -1) {
+        raffle.participants[participantIndex].ticketsBought += ticketsBought;
+      } else {
+        raffle.participants.push({ userId, ticketsBought });
+      }
+      await raffle.save();
+
+      // Save order record
+      const order = new Order({
+        userId,
+        raffleId,
+        ticketsBought,
+        amount: totalAmount,
+        baseAmount: baseAmount,
+        taxAmount: taxAmount,
+        status: "completed",
+        paymentId: payment.id,
+        receiptSent: false,
+      });
       await order.save();
 
-    } catch (emailError) {
-      console.error(" PURCHASE Error sending receipt email:", emailError);
-      // Log the failure but don't fail the purchase
-      order.receiptSent = false;
-      order.receiptError = emailError.message;
-      await order.save();
-      // Continue with success response - email failure shouldn't block purchase
+      console.log(" PURCHASE Order saved:", order._id);
+
+      // Send receipt email
+      try {
+        console.log(" PURCHASE Sending receipt email to:", user.email);
+
+        const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
+        const orderLink = `${frontendUrl}/orders/${order._id}`;
+        
+        await transporter.verify();
+        console.log(" PURCHASE SMTP connection verified");
+
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: user.email,
+          subject: `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
+          html: `
+            <p>Dear ${user.username},</p>
+            <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
+            
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
+              <h3 style="color: #333; margin-top: 0;">Order Details</h3>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${payment.id}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${baseAmount.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${taxAmount.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
+                  <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${totalAmount.toFixed(2)} CAD</td>
+                </tr>
+              </table>
+            </div>
+
+            <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
+
+            <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+              <strong>📧 Need Help?</strong>
+              <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
+            </div>
+
+            <p>Best regards,</p>
+            <p>Raffle System Team</p>
+          `,
+        });
+
+        console.log(" PURCHASE Receipt email sent successfully");
+        
+        order.receiptSent = true;
+        order.receiptSentAt = new Date();
+        await order.save();
+
+      } catch (emailError) {
+        console.error(" PURCHASE Error sending receipt email:", emailError);
+        order.receiptSent = false;
+        order.receiptError = emailError.message;
+        await order.save();
+      }
+
+      res.json({
+        message: "Tickets purchased successfully",
+        totalTicketsSold: raffle.totalTicketsSold,
+        orderId: order._id,
+        amount: totalAmount,
+        baseAmount: baseAmount,
+        taxAmount: taxAmount,
+        receiptEmail: user.email,
+        receiptSent: order.receiptSent,
+      });
+
+    } catch (squareError) {
+      console.error(" PURCHASE Square API error:", squareError);
+      return res.status(500).json({ 
+        error: "Payment processing failed",
+        details: squareError.message 
+      });
     }
-
-    // Respond with success message (include tax breakdown)
-    res.json({
-      message: "Tickets purchased successfully",
-      totalTicketsSold: raffle.totalTicketsSold,
-      orderId: order._id,
-      amount: totalAmount,
-      baseAmount: baseAmount,
-      taxAmount: taxAmount,
-      receiptEmail: user.email, // Confirm email address used
-      receiptSent: order.receiptSent, // Include receipt status in response
-    });
 
   } catch (error) {
     console.error(" PURCHASE Server error:", error);
-
-    // If Square API returned an error, log details
-    if (error?.response) {
-      console.error(" PURCHASE Square API response:", error.response.body);
-    }
-
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
- 
+
+// ... rest of your controller functions remain exactly the same ...
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
   const { title, description, startDate, endDate, price, category } = req.body;
@@ -267,8 +322,7 @@ const createRaffle = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
- 
- 
+
 // ======================= WINNING CHANCE =======================
 const getRaffleWinningChance = async (req, res) => {
   try {
@@ -299,19 +353,17 @@ const getRaffleWinningChance = async (req, res) => {
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
- 
- 
+
 // ======================= GET ALL RAFFLES =======================
 const getAllRaffles = async (req, res) => {
   try {
-    const raffles = await Raffle.find().sort({ createdAt: -1 }); // Sort by newest first
+    const raffles = await Raffle.find().sort({ createdAt: -1 });
     res.json(raffles);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
 };
- 
- 
+
 // ======================= GET USER'S RAFFLES =======================
 const getUserRaffles = async (req, res) => {
   try {
@@ -350,8 +402,7 @@ const getUserRaffles = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
- 
- 
+
 // ======================= GET RECENT RAFFLES =======================
 const getRecentRaffles = async (req, res) => {
   try {
@@ -361,8 +412,7 @@ const getRecentRaffles = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
- 
- 
+
 // ======================= GET RAFFLE BY ID =======================
 const getRaffleById = async (req, res) => {
   try {
@@ -375,8 +425,7 @@ const getRaffleById = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
- 
- 
+
 // ======================= UPDATE RAFFLE =======================
 const updateRaffle = async (req, res) => {
   try {
@@ -407,8 +456,7 @@ const updateRaffle = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
- 
- 
+
 // ======================= DELETE RAFFLE =======================
 const deleteRaffle = async (req, res) => {
   try {
@@ -429,8 +477,7 @@ const deleteRaffle = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
- 
- 
+
 // ======================= PICK WINNER =======================
 const pickWinner = async (req, res) => {
   try {
@@ -485,8 +532,7 @@ const pickWinner = async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
- 
- 
+
 // ======================= UPDATE RAFFLE STATUSES (Scheduled Job) =======================
 async function updateRaffleStatuses() {
   const now = new Date();
@@ -519,7 +565,7 @@ async function updateRaffleStatuses() {
     console.error('Error updating raffle statuses:', err);
   }
 }
- 
+
 // ======================= EXPORT RAFFLE DATA TO CSV =======================
 const exportRaffleCSV = async (req, res) => {
   try {
@@ -560,8 +606,7 @@ const exportRaffleCSV = async (req, res) => {
     res.status(500).json({ message: 'Failed to export raffle data' });
   }
 };
- 
- 
+
 // ======================= EXPORT CONTROLLERS =======================
 module.exports = {
   createRaffle,
