@@ -25,15 +25,14 @@ const transporter = nodemailer.createTransport({
   }
 });
 
- 
-const { Client, Environment } = require('square');
- 
-// Initialize Square client (using Sandbox for testing)
-const client = new Client({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN, // Securely stored in environment variable
-  environment: Environment.Sandbox,            
+const { SquareClient } = require('square');
+
+const client = new SquareClient({
+  token: process.env.SQUARE_ACCESS_TOKEN,
+  environment: 'sandbox',  // or 'production'
 });
- 
+
+
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
   try {

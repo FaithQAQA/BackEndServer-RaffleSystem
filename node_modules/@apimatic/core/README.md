@@ -5,6 +5,7 @@ This package provides the core HTTP request orchestration, response handling, an
 The exported functionality includes:
 
 * **Request Building**: Create fully-configured HTTP requests with dynamic URL construction, query serialization, header management, and support for multiple body formats including JSON, XML, form data, and file uploads.
+* **Request Adapters**: Utilities to convert incoming requests, such as Express.js requests, into core HttpRequest objects.
 * **Authentication Integration**: Seamlessly incorporate API key, bearer token, and custom authentication schemes into request execution.
 * **Response Processing**: Validate and transform API responses into strongly-typed objects, with support for JSON, XML, text, and streams.
 * **Interceptor System**: Extend request/response pipelines with authentication injection, retry strategies, logging, and schema-based validation.

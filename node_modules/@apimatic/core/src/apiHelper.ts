@@ -162,7 +162,7 @@ function replaceBodyPlaceholders(
       const [, ...rest] = element?.split('#');
       const nodePointer = rest.join('#')?.slice(0, -1);
       if (nodePointer) {
-        const value = extractValueFromJsonPointer(parsed, nodePointer);
+        const value = getValueByJsonPointer(parsed, nodePointer);
         const replaced_value = value !== null ? JSON.stringify(value) : '';
         message = message.replace(element, replaced_value);
       }
@@ -173,7 +173,7 @@ function replaceBodyPlaceholders(
   return message;
 }
 
-function extractValueFromJsonPointer(obj: any, pointer: string): any {
+export function getValueByJsonPointer(obj: any, pointer: string): any {
   if (pointer === '') {
     return obj;
   }
