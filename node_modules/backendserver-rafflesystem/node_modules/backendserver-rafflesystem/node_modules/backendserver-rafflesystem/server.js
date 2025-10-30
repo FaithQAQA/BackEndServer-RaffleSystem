@@ -1,9 +1,18 @@
 // server.js
 const app = require('./app');
+const nodemailer = require('nodemailer');
 const dotenv = require('dotenv');
 require('./jobs/raffleScheduler');  // This will start the cron job
 
 dotenv.config();
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS, // App Password without spaces
+  },
+});
 
 const PORT = process.env.PORT || 5000;
 
