@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const User = require('../Models/User'); 
 
-require('dotenv').config();
+require('dotenv').config({ path: '../.env' }); // point to project root
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
