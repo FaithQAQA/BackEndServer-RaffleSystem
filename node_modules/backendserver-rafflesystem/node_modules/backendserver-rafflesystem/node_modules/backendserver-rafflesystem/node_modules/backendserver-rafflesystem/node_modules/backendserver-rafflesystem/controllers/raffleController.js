@@ -10,11 +10,19 @@ dotenv.config();
 
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // Use TLS
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    pass: process.env.EMAIL_PASS, // Make sure this is an App Password
   },
+  connectionTimeout: 30000, // Increase timeouts
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
+  tls: {
+    rejectUnauthorized: false // Bypass certificate validation issues
+  }
 });
 
  
@@ -142,6 +150,10 @@ const purchaseTickets = async (req, res) => {
       const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
       const orderLink = `${frontendUrl}/orders/${order._id}`;
       
+      // Verify transporter connection first
+      await transporter.verify();
+      console.log(" PURCHASE SMTP connection verified");
+
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: user.email,
@@ -229,6 +241,7 @@ const purchaseTickets = async (req, res) => {
       baseAmount: baseAmount,
       taxAmount: taxAmount,
       receiptEmail: user.email, // Confirm email address used
+      receiptSent: order.receiptSent, // Include receipt status in response
     });
 
   } catch (error) {
