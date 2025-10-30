@@ -18,24 +18,17 @@ const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
 
   try {
-    console.log(" REGISTER Incoming request:", req.body);
+    console.log("REGISTER Incoming request:", req.body);
 
-    let user = await User.findOne({ email });
-    if (user) {
+    const userExists = await User.findOne({ email });
+    if (userExists) {
       return res.status(400).json({ message: 'User already exists' });
     }
 
- 
-
-    // Hash password
-    console.log(" REGISTER Hashing password...");
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
-    // Create user
-    user = new User({
+    const user = new User({
       username,
       email,
       password: hashedPassword,
@@ -45,37 +38,29 @@ const registerUser = async (req, res) => {
 
     await user.save();
 
-    // Construct verification link
-    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
+    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
     const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
-    
-    // Send verification email
-    try {
-      console.log(" REGISTER Sending verification email to:", email);
 
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: 'Email Verification Required',
-        html: `
-          <p>Dear ${username},</p>
-          <p>Thank you for signing up. Please verify your email by clicking the link below:</p>
-          <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
-          <p>If you did not request this, please ignore this email.</p>
-          <p>Best regards,</p>
-          <p>Your Company Name</p>
-        `,
-      });
-
-      console.log(" REGISTER Verification email sent.");
-    } catch (emailError) {
-      console.error(" REGISTER Error sending email:", emailError);
-      return res.status(201).json({ message: 'User registered, but email sending failed.' });
-    }
-
+    // Respond immediately
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
+
+    // Send email asynchronously (fire-and-forget)
+    transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Email Verification Required',
+      html: `
+        <p>Dear ${username},</p>
+        <p>Thank you for signing up. Please verify your email by clicking the link below:</p>
+        <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
+        <p>If you did not request this, please ignore this email.</p>
+        <p>Best regards,</p>
+        <p>Your Company Name</p>
+      `,
+    }).catch(err => console.error("Error sending email:", err));
+
   } catch (err) {
-    console.error(" REGISTER Server error:", err);
+    console.error("REGISTER Server error:", err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
