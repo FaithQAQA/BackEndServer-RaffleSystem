@@ -75,12 +75,22 @@ const squareAPI = new SquareDirectAPI(process.env.SQUARE_ACCESS_TOKEN, 'sandbox'
 
 // ======================= EMAIL TRANSPORTER =======================
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,          // use TLS with STARTTLS
+  requireTLS: true,       // force TLS
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_APP_PASSWORD,
   },
+  // optional, for debugging
+  logger: true,
+  debug: true,
+  // optional timeouts
+  connectionTimeout: 10 * 1000,   // 10 seconds
+  greetingTimeout: 10 * 1000,
 });
+
 
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
