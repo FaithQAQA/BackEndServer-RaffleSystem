@@ -73,22 +73,21 @@ class SquareDirectAPI {
 // Initialize Square API
 const squareAPI = new SquareDirectAPI(process.env.SQUARE_ACCESS_TOKEN, 'sandbox');
 
-// ======================= EMAIL TRANSPORTER =======================
+// ======================= ✅ SENDGRID SMTP CONFIGURATION =======================
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
+  host: 'smtp.sendgrid.net',
   port: 587,
-  secure: false,          // use TLS with STARTTLS
-  requireTLS: true,       // force TLS
+  secure: false, // Use TLS
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.GOOGLE_APP_PASSWORD,
+    user: 'apikey', // ← Must be the string 'apikey'
+    pass: process.env.SENDGRID_API_KEY, // Your SendGrid API key
   },
-  // optional, for debugging
-  logger: true,
-  debug: true,
-  // optional timeouts
-  connectionTimeout: 10 * 1000,   // 10 seconds
-  greetingTimeout: 10 * 1000,
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
+  tls: {
+    rejectUnauthorized: false
+  }
 });
 
 
@@ -209,10 +208,10 @@ const purchaseTickets = async (req, res) => {
         const orderLink = `${frontendUrl}/orders/${order._id}`;
         
         await transporter.verify();
-        console.log(" PURCHASE SMTP connection verified");
+        console.log(" PURCHASE SendGrid SMTP connection verified");
 
         await transporter.sendMail({
-          from: process.env.EMAIL_USER,
+          from: 'TicketStack <noreply@ticketstack.com>', // You can customize this
           to: user.email,
           subject: `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
           html: `
@@ -269,11 +268,11 @@ const purchaseTickets = async (req, res) => {
             </div>
 
             <p>Best regards,</p>
-            <p>Raffle System Team</p>
+            <p>TicketStack Team</p>
           `,
         });
 
-        console.log(" PURCHASE Receipt email sent successfully");
+        console.log(" PURCHASE Receipt email sent successfully via SendGrid");
         
         order.receiptSent = true;
         order.receiptSentAt = new Date();
@@ -311,7 +310,6 @@ const purchaseTickets = async (req, res) => {
   }
 };
 
-// ... rest of your controller functions remain exactly the same ...
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
   const { title, description, startDate, endDate, price, category } = req.body;
