@@ -1,7 +1,9 @@
+// services/emailService.js
 const sgMail = require('@sendgrid/mail');
 
 class EmailService {
   constructor() {
+    this.verifiedSender = 'voicenotify2@gmail.com'; // Hardcoded for safety
     this.isInitialized = false;
     this.initialize();
   }
@@ -10,58 +12,75 @@ class EmailService {
     const apiKey = process.env.SENDGRID_API_KEY;
     
     if (!apiKey) {
-      console.error('❌ SENDGRID_API_KEY is missing from environment variables');
+      console.error('❌ SENDGRID_API_KEY is missing from Render environment variables');
       return;
     }
 
-    // Validate API key format
-    if (!apiKey.startsWith('SG.') || apiKey.length < 50) {
-      console.error('❌ Invalid SendGrid API key format. Should start with "SG." and be ~70 characters');
-      return;
-    }
+    // Override any environment variable with your verified sender
+    const fromEmail = this.verifiedSender; // Always use the verified one
+    const fromName = process.env.SENDGRID_FROM_NAME || 'TicketStack';
 
     try {
       sgMail.setApiKey(apiKey);
       this.isInitialized = true;
-      console.log('✅ SendGrid initialized successfully');
+      
+      console.log('✅ SendGrid Initialized for Single Sender');
+      console.log('📧 Verified Sender:', fromEmail);
+      console.log('🏷️  From Name:', fromName);
+      console.log('🔑 API Key:', apiKey ? 'Present' : 'Missing');
+      
     } catch (error) {
-      console.error('❌ Failed to initialize SendGrid:', error.message);
+      console.error('❌ SendGrid initialization failed:', error.message);
     }
   }
 
   async sendEmail(to, subject, html, text = '') {
     if (!this.isInitialized) {
-      throw new Error('SendGrid not initialized - check API key configuration');
+      throw new Error('SendGrid not initialized. Check API key and environment variables on Render.');
     }
 
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@ticketstack.com';
-    const fromName = process.env.SENDGRID_FROM_NAME || 'TicketStack';
-
+    // Always use the verified sender
     const msg = {
-      to,
+      to: to.trim(),
       from: {
-        email: fromEmail,
-        name: fromName,
+        email: this.verifiedSender, // Your verified email
+        name: process.env.SENDGRID_FROM_NAME || 'TicketStack',
       },
-      subject,
-      html,
+      subject: subject.trim(),
+      html: html,
       text: text || this.htmlToText(html),
     };
 
-    console.log(`📧 Sending email to: ${to}, Subject: ${subject}`);
+    console.log(`📧 Sending from verified sender:`, {
+      from: msg.from.email,
+      to: msg.to,
+      subject: msg.subject.substring(0, 50) + '...'
+    });
 
     try {
-      const result = await sgMail.send(msg);
-      console.log('✅ Email sent successfully');
-      return { success: true, messageId: result[0]?.headers['x-message-id'] };
+      const [result] = await sgMail.send(msg);
+      console.log('✅ Email sent successfully via Single Sender');
+      return { 
+        success: true, 
+        messageId: result?.headers?.['x-message-id'],
+        statusCode: result?.statusCode 
+      };
     } catch (error) {
-      console.error('❌ SendGrid API error:', error.message);
+      console.error('❌ SendGrid Error:', error.message);
       
       if (error.response) {
-        console.error('SendGrid response body:', JSON.stringify(error.response.body, null, 2));
+        console.error('Status Code:', error.response.statusCode);
+        console.error('Error Details:', JSON.stringify(error.response.body, null, 2));
       }
-      
-      throw error;
+
+      // Specific error handling
+      if (error.code === 401) {
+        throw new Error('Invalid SendGrid API key. Generate a new one in SendGrid dashboard.');
+      } else if (error.code === 403) {
+        throw new Error('Sender not properly verified. Check Single Sender Verification in SendGrid.');
+      } else {
+        throw new Error(`Email failed: ${error.message}`);
+      }
     }
   }
 
@@ -72,27 +91,49 @@ class EmailService {
       .trim();
   }
 
-  // Test method to verify configuration
+  // Test your specific configuration
   async testConfiguration() {
     if (!this.isInitialized) {
       return { success: false, error: 'SendGrid not initialized' };
     }
 
     try {
-      // Simple test - try to get account info
-      const client = require('@sendgrid/client');
-      client.setApiKey(process.env.SENDGRID_API_KEY);
-      
-      const request = {
-        method: 'GET',
-        url: '/v3/user/account'
-      };
-      
-      const [response] = await client.request(request);
-      return { success: true, account: response.body };
+      const result = await this.sendEmail(
+        this.verifiedSender, // Send test to yourself
+        'TicketStack - SendGrid Test',
+        `
+          <h1>🎉 SendGrid Test Successful!</h1>
+          <p>Your Single Sender Verification is working correctly.</p>
+          <p><strong>Verified Sender:</strong> ${this.verifiedSender}</p>
+          <p><strong>Time:</strong> ${new Date().toISOString()}</p>
+          <p><strong>Backend:</strong> Render</p>
+          <p><strong>Frontend:</strong> Vercel</p>
+          <hr>
+          <p>If you received this, your TicketStack email system is ready! 🎟️</p>
+        `
+      );
+
+      return { success: true, result };
+
     } catch (error) {
-      return { success: false, error: error.message };
+      return { 
+        success: false, 
+        error: error.message,
+        verifiedSender: this.verifiedSender
+      };
     }
+  }
+
+  getStatus() {
+    return {
+      initialized: this.isInitialized,
+      verifiedSender: this.verifiedSender,
+      fromName: process.env.SENDGRID_FROM_NAME || 'TicketStack',
+      apiKeyExists: !!process.env.SENDGRID_API_KEY,
+      apiKeyLength: process.env.SENDGRID_API_KEY?.length,
+      backend: 'Render',
+      frontend: 'Vercel'
+    };
   }
 }
 

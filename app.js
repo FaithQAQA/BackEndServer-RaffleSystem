@@ -6,6 +6,7 @@ const authRoutes = require('./Routes/authRoutes');
 const raffleRoutes = require('./Routes/raffleRoutes');
 const CartRoutes= require ('./Routes/cartRoutes')
 const Orders = require('./Routes/orders');
+const emailRoutes = require('./Routes/emailRoutes'); // Add this
 const app = express();
 const userRoutes = require('./Routes/users');
 // Middleware
@@ -18,6 +19,7 @@ app.use('/api', raffleRoutes);
 app.use('/api/cart', CartRoutes);
 app.use('/api/orders', Orders); 
 app.use('/api', userRoutes);
+app.use('/api/email', emailRoutes); // Add this line
 // Connect to MongoDB
 connectDB();
 
