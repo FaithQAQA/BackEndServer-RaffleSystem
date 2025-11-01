@@ -10,6 +10,7 @@ const {
   updateUserProfile,
   getUserProfile
 } = require('../controllers/authController');
+const emailService = require('../services/emailService'); // Make sure this path is correct
 
 // Public routes
 router.post('/register', registerUser);
@@ -18,8 +19,8 @@ router.post('/login', loginUser);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
 
-// Test your Single Sender configuration
-app.get('/api/email/test', async (req, res) => {
+// Email test routes - USE router NOT app
+router.get('/email/test', async (req, res) => {
   try {
     const status = emailService.getStatus();
     
@@ -55,8 +56,8 @@ app.get('/api/email/test', async (req, res) => {
   }
 });
 
-// Quick status check
-app.get('/api/email/status', (req, res) => {
+// Quick status check - USE router NOT app
+router.get('/email/status', (req, res) => {
   res.json(emailService.getStatus());
 });
 
