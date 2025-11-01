@@ -10,7 +10,8 @@ const {
   getRaffleWinningChance,
   purchaseTickets,
   getUserRaffles,
-  exportRaffleCSV
+  exportRaffleCSV,
+  pickWinner
 } = require('../controllers/raffleController');
  
 const router = express.Router();
@@ -26,5 +27,6 @@ router.get('/raffles/:raffleId/winning-chance/:userId', authMiddleware, getRaffl
 router.post('/raffles/:raffleId/purchase',authMiddleware, purchaseTickets);
 router.get("/user/:userId/raffles", getUserRaffles);
 router.get('/raffles/:id/export', authMiddleware, exportRaffleCSV);
- 
+// In your raffle routes
+router.post('/raffles/:raffleId/pick-winner', authMiddleware, pickWinner); 
 module.exports = router;

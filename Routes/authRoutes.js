@@ -1,24 +1,25 @@
-// routes/authRoutes.js
 const express = require('express');
-const { 
-  registerUser, 
-  loginUser, 
-  verifyEmail, 
-  forgotPassword,   
-  resetPassword     
+const router = express.Router();
+const auth = require('../middleware/authMiddleware');
+const {
+  registerUser,
+  verifyEmail,
+  loginUser,
+  forgotPassword,
+  resetPassword,
+  updateUserProfile,
+  getUserProfile
 } = require('../controllers/authController');
 
-const router = express.Router();
-
-// Existing routes
+// Public routes
 router.post('/register', registerUser);
+router.get('/verify-email', verifyEmail);
 router.post('/login', loginUser);
-router.get('/verify-email', verifyEmail); // New route
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 
-// Forgot Password route
-router.post('/forgot-password', forgotPassword); // Add forgot password route
-
-// Reset Password route
-router.post('/reset-password', resetPassword); // Add reset password route
+// Protected routes (require authentication)
+router.get('/profile', auth, getUserProfile);
+router.put('/profile', auth, updateUserProfile);
 
 module.exports = router;

@@ -1,19 +1,166 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-const User = require('../Models/User'); 
+const User = require('../Models/User');
+const sgMail = require('@sendgrid/mail');
 
-require('dotenv').config({ path: '../.env' }); // point to project root
+require('dotenv').config({ path: '../.env' });
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// ======================= ✅ SENDGRID EMAIL FUNCTION =======================
+const sendEmail = async (to, subject, html) => {
+  const msg = {
+    to: to,
+    from: 'voicenotify2@gmail.com', // ✅ Use your verified SendGrid email
+    subject: subject,
+    html: html,
+  };
 
+  try {
+    await sgMail.send(msg);
+    console.log('✅ Email sent successfully via SendGrid API');
+    return true;
+  } catch (error) {
+    console.error('❌ SendGrid API error:', error);
+    throw error;
+  }
+};
+
+// ================= UPDATE USER PROFILE =================
+const updateUserProfile = async (req, res) => {
+  try {
+    const { username, email, currentPassword, newPassword } = req.body;
+    const userId = req.user.id; // From auth middleware
+
+    console.log("UPDATE PROFILE Request received for user:", userId);
+
+    // Find user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if username is taken by another user
+    if (username && username !== user.username) {
+      const existingUser = await User.findOne({ username });
+      if (existingUser) {
+        return res.status(400).json({ message: 'Username is already taken' });
+      }
+      user.username = username;
+    }
+
+    // Check if email is taken by another user
+    if (email && email !== user.email) {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({ message: 'Email is already registered' });
+      }
+      user.email = email;
+      user.emailVerified = false; // Require re-verification if email changed
+      
+      // Send verification email for new email
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      user.verificationToken = verificationToken;
+
+      const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
+      const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+
+      try {
+        const emailHtml = `
+          <p>Dear ${user.username},</p>
+          <p>Please verify your new email address by clicking the link below:</p>
+          <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
+          <p>If you did not request this change, please contact support immediately.</p>
+          <p>Best regards,<br/>TicketStack Team</p>
+        `;
+
+        await sendEmail(
+          email,
+          'Verify Your New Email Address',
+          emailHtml
+        );
+
+        console.log(`✅ Verification email sent to new email: ${email}`);
+      } catch (emailError) {
+        console.error("❌ Error sending verification email:", emailError);
+        // Continue with profile update even if email fails
+      }
+    }
+
+    // Handle password change
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ message: 'Current password is required to set new password' });
+      }
+
+      // Verify current password
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+      if (!isCurrentPasswordValid) {
+        return res.status(400).json({ message: 'Current password is incorrect' });
+      }
+
+      // Update password
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      user.password = hashedPassword;
+
+      // Send password change confirmation email
+      try {
+        const emailHtml = `
+          <p>Dear ${user.username},</p>
+          <p>Your password has been successfully changed.</p>
+          <p>If you did not make this change, please contact support immediately.</p>
+          <p>Best regards,<br/>TicketStack Team</p>
+        `;
+
+        await sendEmail(
+          user.email,
+          'Password Changed Successfully',
+          emailHtml
+        );
+
+        console.log(`✅ Password change confirmation sent to: ${user.email}`);
+      } catch (emailError) {
+        console.error("❌ Error sending password change confirmation:", emailError);
+        // Continue with profile update even if email fails
+      }
+    }
+
+    await user.save();
+
+    // Return updated user data (excluding sensitive fields)
+    const updatedUser = await User.findById(userId).select('-password -resetToken -resetTokenExpiry -verificationToken');
+
+    res.json({
+      message: 'Profile updated successfully',
+      user: updatedUser
+    });
+
+  } catch (error) {
+    console.error('UPDATE PROFILE Server error:', error);
+    res.status(500).json({ message: 'Server error while updating profile' });
+  }
+};
+
+// ================= GET USER PROFILE =================
+const getUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; // From auth middleware
+
+    const user = await User.findById(userId).select('-password -resetToken -resetTokenExpiry -verificationToken');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      user
+    });
+  } catch (error) {
+    console.error('GET PROFILE Server error:', error);
+    res.status(500).json({ message: 'Server error while fetching profile' });
+  }
+};
+
+// ================= REGISTER USER =================
 const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
 
@@ -44,20 +191,27 @@ const registerUser = async (req, res) => {
     // Respond immediately
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
 
-    // Send email asynchronously (fire-and-forget)
-    transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Email Verification Required',
-      html: `
+    // Send verification email using consistent sendEmail function
+    try {
+      const emailHtml = `
         <p>Dear ${username},</p>
         <p>Thank you for signing up. Please verify your email by clicking the link below:</p>
         <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
         <p>If you did not request this, please ignore this email.</p>
-        <p>Best regards,</p>
-        <p>Your Company Name</p>
-      `,
-    }).catch(err => console.error("Error sending email:", err));
+        <p>Best regards,<br/>TicketStack Team</p>
+      `;
+
+      await sendEmail(
+        email,
+        'Email Verification Required',
+        emailHtml
+      );
+
+      console.log(`✅ Verification email sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Error sending verification email:", emailError);
+      // Don't throw error to user, just log it
+    }
 
   } catch (err) {
     console.error("REGISTER Server error:", err);
@@ -65,15 +219,16 @@ const registerUser = async (req, res) => {
   }
 };
 
+// ================= VERIFY EMAIL =================
 const verifyEmail = async (req, res) => {
   const { token } = req.query;
 
   try {
-    console.log(" VERIFY Token received:", token);
+    console.log("VERIFY Token received:", token);
     const user = await User.findOne({ verificationToken: token });
 
     if (!user) {
-      console.log(" [VERIFY] Invalid token");
+      console.log("[VERIFY] Invalid token");
       return res.status(400).json({ message: 'Invalid or expired token' });
     }
 
@@ -83,13 +238,12 @@ const verifyEmail = async (req, res) => {
 
     res.json({ message: 'Email verified successfully! You can now log in.' });
   } catch (err) {
-    console.error(" VERIFY Server error:", err);
+    console.error("VERIFY Server error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-
-
+// ================= FORGOT PASSWORD =================
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -102,38 +256,43 @@ const forgotPassword = async (req, res) => {
     // Generate a reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
     user.resetToken = resetToken;
-    user.resetTokenExpiry = Date.now() + 3600000; // Token expires in 1 hour
+    user.resetTokenExpiry = Date.now() + 3600000; // 1 hour
     await user.save();
 
-    // Send password reset email
-    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app' || 'https://raffle-system-git-main-faithqaqas-projects.vercel.app';
+    const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Password Reset Request',
-      html: `
+    // Send password reset email using consistent sendEmail function
+    try {
+      const emailHtml = `
         <p>Dear ${user.username},</p>
         <p>We received a request to reset your password. Please click the link below to reset it:</p>
         <p><a href="${resetLink}" style="color: #007bff; text-decoration: none;">Reset My Password</a></p>
         <p>If you did not request this, please ignore this email.</p>
-        <p>Best regards,</p>
-        <p>Your Company Name</p>
-      `,
-    });
+        <p>This link will expire in 1 hour.</p>
+        <p>Best regards,<br/>TicketStack Team</p>
+      `;
+
+      await sendEmail(
+        email,
+        'Password Reset Request',
+        emailHtml
+      );
+
+      console.log(`✅ Password reset email sent to ${email}`);
+    } catch (emailError) {
+      console.error("❌ Error sending password reset email:", emailError);
+      return res.status(500).json({ message: 'Error sending reset email' });
+    }
 
     res.json({ message: 'Password reset link sent to your email.' });
   } catch (err) {
-    console.error(" FORGOT PASSWORD Server error:", err);
+    console.error("FORGOT PASSWORD Server error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-
-
-
-// Reset Password
+// ================= RESET PASSWORD =================
 const resetPassword = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
@@ -142,56 +301,69 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ message: 'Token and new password are required' });
     }
 
-    // Find user by reset token
     const user = await User.findOne({ resetToken: token });
-
     if (!user) {
       return res.status(400).json({ message: 'Invalid or expired reset token' });
     }
 
-    // Check if token is expired
     if (user.resetTokenExpiry && user.resetTokenExpiry < Date.now()) {
       return res.status(400).json({ message: 'Reset token has expired' });
     }
 
-    // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password and clear reset token
     user.password = hashedPassword;
     user.resetToken = null;
     user.resetTokenExpiry = null;
-
     await user.save();
 
-    res.status(200).json({ message: 'Password reset successfully' });
+    // Send confirmation email
+    try {
+      const emailHtml = `
+        <p>Dear ${user.username},</p>
+        <p>Your password has been successfully reset.</p>
+        <p>If you did not make this change, please contact support immediately.</p>
+        <p>Best regards,<br/>TicketStack Team</p>
+      `;
 
+      await sendEmail(
+        user.email,
+        'Password Reset Successful',
+        emailHtml
+      );
+
+      console.log(`✅ Password reset confirmation sent to ${user.email}`);
+    } catch (emailError) {
+      console.error("❌ Error sending password reset confirmation:", emailError);
+      // Don't fail the reset process if email fails
+    }
+
+    res.status(200).json({ message: 'Password reset successfully' });
   } catch (error) {
     console.error('Error resetting password:', error);
     res.status(500).json({ message: 'Server error, please try again' });
   }
 };
 
-
+// ================= LOGIN USER =================
 const loginUser = async (req, res) => {
   console.log("LOGIN Request received:", req.body);
 
   try {
     const user = await User.findOne({ email: req.body.email });
     if (!user) {
-      console.log(" LOGIN User not found:", req.body.email);
+      console.log("LOGIN User not found:", req.body.email);
       return res.status(400).json({ type: "credentials", message: "Invalid email or password" });
     }
 
     // Require email verification unless admin
     if (!user.emailVerified && !user.isAdmin) {
-      console.log(" LOGIN Email not verified");
+      console.log("LOGIN Email not verified");
       return res.status(400).json({ type: "unverified", message: "Please verify your email before logging in." });
     }
 
     // Handle account lock
     if (user.isLocked && user.lockUntil > Date.now()) {
-      console.log(` LOGIN Account locked until: ${new Date(user.lockUntil).toLocaleString()}`);
+      console.log(`LOGIN Account locked until: ${new Date(user.lockUntil).toLocaleString()}`);
       return res.status(400).json({ 
         type: "locked", 
         message: `Account locked. Try again after ${new Date(user.lockUntil).toLocaleString()}`,
@@ -206,7 +378,7 @@ const loginUser = async (req, res) => {
 
       if (user.failedLoginAttempts >= 3) {
         user.isLocked = true;
-        user.lockUntil = Date.now() + 30 * 60 * 1000; // Lock for 30 minutes
+        user.lockUntil = Date.now() + 30 * 60 * 1000; // 30 minutes
       }
 
       await user.save();
@@ -223,9 +395,9 @@ const loginUser = async (req, res) => {
     const payload = { id: user._id, isAdmin: user.isAdmin };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1h" });
 
-    res.json({ message: "Login successful!", token, isAdmin: user.isAdmin, id: user._id  });
+    res.json({ message: "Login successful!", token, isAdmin: user.isAdmin, id: user._id });
   } catch (err) {
-    console.error(" Server error:", err);
+    console.error("Server error:", err);
     res.status(500).json({ type: "server", message: "Server error" });
   }
 };
@@ -235,6 +407,7 @@ module.exports = {
   verifyEmail, 
   loginUser, 
   forgotPassword, 
-  resetPassword 
+  resetPassword,
+  updateUserProfile,
+  getUserProfile
 };
-
