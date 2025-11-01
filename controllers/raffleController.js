@@ -95,32 +95,34 @@ const sendEmail = async (to, subject, html) => {
   }
 };
 
+const emailService = require('../services/emailService'); // Adjust path as needed
+
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
   try {
     const { userId, ticketsBought, paymentToken, includeTax = true } = req.body;
     const raffleId = req.params.raffleId;
 
-    console.log(" PURCHASE Incoming request:", { userId, ticketsBought, raffleId });
+    console.log("🛒 PURCHASE Incoming request:", { userId, ticketsBought, raffleId });
 
     // Validate raffle existence
     const raffle = await Raffle.findById(raffleId);
     if (!raffle) {
-      console.log(" PURCHASE Raffle not found:", raffleId);
+      console.log("❌ PURCHASE Raffle not found:", raffleId);
       return res.status(404).json({ error: "Raffle not found" });
     }
 
     // Validate user existence
     const user = await User.findById(userId);
     if (!user) {
-      console.log(" PURCHASE User not found:", userId);
+      console.log("❌ PURCHASE User not found:", userId);
       return res.status(404).json({ error: "User not found" });
     }
 
     // Validate email address
-    if (!user.email || !user.emailVerified) {
-      console.log(" PURCHASE Email not verified:", user.email);
-      return res.status(400).json({ error: "Email verification required" });
+    if (!user.email) {
+      console.log("❌ PURCHASE User email missing:", user.email);
+      return res.status(400).json({ error: "Valid email address required" });
     }
 
     // Calculate purchase amount WITH TAX
@@ -130,13 +132,13 @@ const purchaseTickets = async (req, res) => {
     const totalAmount = baseAmount + taxAmount;
     
     if (baseAmount <= 0) {
-      console.log(" PURCHASE Invalid ticket amount:", ticketsBought);
+      console.log("❌ PURCHASE Invalid ticket amount:", ticketsBought);
       return res.status(400).json({ error: "Invalid ticket amount" });
     }
     
     const amountCents = Math.round(totalAmount * 100);
 
-    console.log(" PURCHASE Payment breakdown:", {
+    console.log("💰 PURCHASE Payment breakdown:", {
       baseAmount,
       taxAmount,
       totalAmount,
@@ -145,17 +147,17 @@ const purchaseTickets = async (req, res) => {
       pricePerTicket: raffle.price
     });
 
-    // ✅ CORRECT: Process payment using direct REST API
+    // Process payment using Square API
     const idempotencyKey = crypto.randomUUID();
     
-    console.log(" PURCHASE Processing payment...");
+    console.log("💳 PURCHASE Processing payment...");
     
     try {
       const paymentResult = await squareAPI.createPayment({
         sourceId: paymentToken,
         idempotencyKey: idempotencyKey,
         amountMoney: {
-          amount: amountCents, // Note: No BigInt needed for direct API
+          amount: amountCents,
           currency: 'CAD',
         },
         autocomplete: true,
@@ -164,17 +166,17 @@ const purchaseTickets = async (req, res) => {
       // Extract payment info
       const payment = paymentResult.payment;
       if (!payment) {
-        console.error(" PURCHASE Payment object missing in response:", paymentResult);
+        console.error("❌ PURCHASE Payment object missing in response:", paymentResult);
         return res.status(500).json({ error: "Payment failed" });
       }
 
       // Ensure payment was successful
       if (payment.status !== 'COMPLETED') {
-        console.log(" PURCHASE Payment not completed:", payment.status);
+        console.log("❌ PURCHASE Payment not completed:", payment.status);
         return res.status(400).json({ error: "Payment not completed" });
       }
 
-      console.log(" PURCHASE Payment successful:", payment.id);
+      console.log("✅ PURCHASE Payment successful:", payment.id);
 
       // Update raffle with new tickets bought
       raffle.totalTicketsSold += ticketsBought;
@@ -202,90 +204,20 @@ const purchaseTickets = async (req, res) => {
       });
       await order.save();
 
-      console.log(" PURCHASE Order saved:", order._id);
+      console.log("📦 PURCHASE Order saved:", order._id);
 
-      // Send receipt email using SendGrid Web API
-      try {
-        console.log(" PURCHASE Sending receipt email to:", user.email);
-
-        const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
-        const orderLink = `${frontendUrl}/orders/${order._id}`;
-        
-        const emailHtml = `
-          <p>Dear ${user.username},</p>
-          <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
-          
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
-            <h3 style="color: #333; margin-top: 0;">Order Details</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${payment.id}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${baseAmount.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${taxAmount.toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
-                <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${totalAmount.toFixed(2)} CAD</td>
-              </tr>
-            </table>
-          </div>
-
-          <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
-
-          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <strong>📧 Need Help?</strong>
-            <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
-          </div>
-
-          <p>Best regards,</p>
-          <p>TicketStack Team</p>
-        `;
-
-        await sendEmail(
-          user.email,
-          `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
-          emailHtml
-        );
-
-        console.log(" PURCHASE Receipt email sent successfully via SendGrid API");
-        
-        order.receiptSent = true;
-        order.receiptSentAt = new Date();
-        await order.save();
-
-      } catch (emailError) {
-        console.error(" PURCHASE Error sending receipt email:", emailError);
-        order.receiptSent = false;
-        order.receiptError = emailError.message;
-        await order.save();
-      }
+      // Send receipt email (non-blocking)
+      sendReceiptEmailNonBlocking(order, user, raffle, req.headers.origin)
+        .then(result => {
+          if (result.success) {
+            console.log("✅ PURCHASE Receipt email sent successfully");
+          } else {
+            console.log("⚠️ PURCHASE Receipt email failed (non-critical):", result.error);
+          }
+        })
+        .catch(error => {
+          console.error("⚠️ PURCHASE Email sending error:", error);
+        });
 
       res.json({
         message: "Tickets purchased successfully",
@@ -295,11 +227,11 @@ const purchaseTickets = async (req, res) => {
         baseAmount: baseAmount,
         taxAmount: taxAmount,
         receiptEmail: user.email,
-        receiptSent: order.receiptSent,
+        receiptSent: false, // Will be updated async
       });
 
     } catch (squareError) {
-      console.error(" PURCHASE Square API error:", squareError);
+      console.error("❌ PURCHASE Square API error:", squareError);
       return res.status(500).json({ 
         error: "Payment processing failed",
         details: squareError.message 
@@ -307,11 +239,100 @@ const purchaseTickets = async (req, res) => {
     }
 
   } catch (error) {
-    console.error(" PURCHASE Server error:", error);
+    console.error("❌ PURCHASE Server error:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
 
+// Non-blocking email sending function
+async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
+  try {
+    console.log("📧 PURCHASE Sending receipt email to:", user.email);
+
+    const frontendUrl = origin || 'https://raffle-system-lac.vercel.app';
+    const orderLink = `${frontendUrl}/orders/${order._id}`;
+    
+    const emailHtml = `
+      <p>Dear ${user.username || 'Valued Customer'},</p>
+      <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
+      
+      <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
+        <h3 style="color: #333; margin-top: 0;">Order Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.paymentId}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${order.baseAmount.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${order.taxAmount.toFixed(2)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${order.amount.toFixed(2)} CAD</td>
+          </tr>
+        </table>
+      </div>
+
+      <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
+
+      <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <strong>📧 Need Help?</strong>
+        <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
+      </div>
+
+      <p>Best regards,</p>
+      <p>TicketStack Team</p>
+    `;
+
+    await emailService.sendEmail(
+      user.email,
+      `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
+      emailHtml
+    );
+
+    // Update order to mark receipt as sent
+    order.receiptSent = true;
+    order.receiptSentAt = new Date();
+    await order.save();
+
+    return { success: true };
+
+  } catch (emailError) {
+    console.error("❌ PURCHASE Error sending receipt email:", emailError.message);
+    
+    // Update order with error information
+    order.receiptSent = false;
+    order.receiptError = emailError.message;
+    await order.save();
+
+    return { success: false, error: emailError.message };
+  }
+}
 
 // ... rest of your controller functions remain exactly the same ...
 // ======================= CREATE RAFFLE =======================
