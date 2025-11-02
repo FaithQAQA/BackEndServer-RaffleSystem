@@ -1,0 +1,57 @@
+{
+  "name": "ml-kmeans",
+  "version": "4.2.1",
+  "description": "K-Means clustering",
+  "main": "kmeans.js",
+  "module": "src/kmeans.js",
+  "files": [
+    "src",
+    "kmeans.js",
+    "runkit.js"
+  ],
+  "scripts": {
+    "compile": "rollup -c",
+    "eslint": "eslint src",
+    "eslint-fix": "npm run eslint -- --fix",
+    "prepublishOnly": "npm run compile",
+    "test": "npm run test-coverage && npm run eslint",
+    "test-only": "jest",
+    "test-coverage": "jest --coverage"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mljs/kmeans"
+  },
+  "keywords": [
+    "cluster",
+    "kmeans",
+    "data",
+    "mining",
+    "datamining",
+    "machine",
+    "learning"
+  ],
+  "author": "Miguel Asencio <maasencioh@gmail.com> (https://github.com/maasencioh)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mljs/kmeans/issues"
+  },
+  "homepage": "https://github.com/mljs/kmeans",
+  "devDependencies": {
+    "babel-plugin-transform-es2015-modules-commonjs": "^6.26.2",
+    "eslint": "^5.3.0",
+    "eslint-config-cheminfo": "^1.18.0",
+    "eslint-plugin-import": "^2.14.0",
+    "eslint-plugin-jest": "^21.21.0",
+    "esm": "^3.0.76",
+    "jest": "^23.5.0",
+    "ml-dataset-iris": "^1.0.0",
+    "rollup": "^0.64.1"
+  },
+  "dependencies": {
+    "ml-distance-euclidean": "^2.0.0",
+    "ml-matrix": "^5.1.1",
+    "ml-nearest-vector": "^2.0.1",
+    "ml-random": "^0.5.0"
+  }
+}

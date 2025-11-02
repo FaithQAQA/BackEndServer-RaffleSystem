@@ -1,0 +1,48 @@
+
+  <title>Clinic.js Doctor</title> - v{{version}}
+
+  <code>clinic doctor</code> is the first step in profiling your application.
+  It will show you what kind of problem you are having and recommend the path
+  forward.
+
+  To run <code>clinic doctor</code>
+
+    <code>clinic doctor -- node server.js</code>
+
+  Once you exit (Ctrl-C) the process, your report will open in a browser window. You can disable this behavior:
+
+    <code>clinic doctor --open=false -- node server.js</code>
+
+  If profiling on a server, it can be useful to only do data collection:
+
+    <code>clinic doctor --collect-only -- node server.js</code>
+
+  You can then transfer the data and visualize it locally:
+
+    <code>clinic doctor --visualize-only PID.clinic-doctor-sample</code>
+
+  You can use the --autocannon flag to simulate load on your server.
+  --autocannon accepts configuration for autocannon using "subarg" syntax:
+
+    <code>clinic doctor --autocannon [ -m POST /api/example ] -- node server.js</code>
+
+  When configuring --autocannon, the $PORT environment variable contains the
+  port your server is listening on:
+
+    <code>clinic doctor --autocannon [ -m POST 'http://localhost:$PORT/?\$page=1' ] -- node server.js</code>
+
+  Note that dollar signs ($) appearing in the URL must be escaped, else they
+  will be treated as environment variables as well.
+
+  <h1>Flags</h1>
+  -h | --help                Display Help
+  -v | --version             Display Version
+  --collect-only             Do not process data on termination
+  --visualize-only datapath  Build or rebuild visualization from data
+  --sample-interval interval Sample interval in milliseconds
+  --on-port                  Run a script when the server starts listening on a port.
+  --autocannon               Run the autocannon benchmarking tool when the server starts listening on a port.
+  --open                     Boolean to enable or disable your report opening in your web browser.
+  --dest                     Destination for the collected data (default <code>.clinic/</code>).
+  --stop-delay               Add a delay to close the process when a job is done through either `autocannon` or `on-port` flag (milliseconds)
+  --name                     The --name flag sets a name for the output data, allowing you to replace existing reports without generating new ones. Example: <code>.clinic/node-19-test.clinic-flame</code>

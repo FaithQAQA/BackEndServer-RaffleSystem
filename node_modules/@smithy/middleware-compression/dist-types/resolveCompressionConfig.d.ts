@@ -1,0 +1,5 @@
+import type { CompressionInputConfig, CompressionResolvedConfig } from "./configurations";
+/**
+ * @internal
+ */
+export declare const resolveCompressionConfig: <T>(input: T & Required<CompressionInputConfig>) => T & CompressionResolvedConfig;

@@ -72,30 +72,199 @@ class SquareDirectAPI {
 // Initialize Square API
 const squareAPI = new SquareDirectAPI(process.env.SQUARE_ACCESS_TOKEN, 'sandbox');
 
-// ======================= ✅ SENDGRID WEB API CONFIGURATION =======================
+// ======================= ✅ DUAL EMAIL SERVICE CONFIGURATION =======================
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Email sending function using SendGrid Web API
-const sendEmail = async (to, subject, html) => {
-  const msg = {
+// Import both email services - FIXED FOR CLASS
+const EmailService = require('../services/emailServiceGoogle'); // Gmail OAuth2 service class
+const gmailEmailService = new EmailService(); // Create instance
+
+// Email sending function that sends via BOTH SERVICES
+const sendEmailBothServices = async (to, subject, html, fromName = 'Raffle System') => {
+  const emailConfig = {
     to: to,
-    from: 'voicenotify2@gmail.com', // ✅ Use your verified SendGrid email
     subject: subject,
     html: html,
+    fromName: fromName
   };
 
-  try {
+  const results = {
+    sendgrid: { success: false, error: null },
+    gmail: { success: false, error: null }
+  };
+
+  // Send via BOTH services simultaneously
+  const promises = [
+    // SendGrid
+    (async () => {
+      try {
+        console.log('📧 Sending email via SendGrid...');
+        const msg = {
+          to: emailConfig.to,
+          from: 'voicenotify2@gmail.com',
+          subject: emailConfig.subject,
+          html: emailConfig.html,
+        };
+        await sgMail.send(msg);
+        console.log('✅ Email sent successfully via SendGrid API');
+        results.sendgrid = { success: true, service: 'SendGrid' };
+      } catch (sendgridError) {
+        console.error('❌ SendGrid failed:', sendgridError.message);
+        results.sendgrid = { success: false, error: sendgridError.message, service: 'SendGrid' };
+      }
+    })(),
+
+    // Gmail OAuth2 - FIXED: Use the class instance
+    (async () => {
+      try {
+        console.log('📧 Sending email via Gmail OAuth2...');
+        const gmailResult = await gmailEmailService.sendEmail(
+          emailConfig.to,
+          emailConfig.subject,
+          emailConfig.html,
+          emailConfig.fromName
+        );
+        
+        if (gmailResult.success) {
+          console.log('✅ Email sent successfully via Gmail OAuth2');
+          results.gmail = { 
+            success: true, 
+            service: 'Gmail OAuth2',
+            messageId: gmailResult.messageId 
+          };
+        } else {
+          throw new Error(gmailResult.error || 'Gmail service failed');
+        }
+      } catch (gmailError) {
+        console.error('❌ Gmail OAuth2 failed:', gmailError.message);
+        results.gmail = { success: false, error: gmailError.message, service: 'Gmail OAuth2' };
+      }
+    })()
+  ];
+
+  // Wait for both to complete
+  await Promise.allSettled(promises);
+
+  // Return combined results
+  const overallSuccess = results.sendgrid.success || results.gmail.success;
+  
+  console.log('📊 DUAL EMAIL SERVICE RESULTS:', {
+    sendgrid: results.sendgrid.success ? '✅ SUCCESS' : '❌ FAILED',
+    gmail: results.gmail.success ? '✅ SUCCESS' : '❌ FAILED',
+    overall: overallSuccess ? '✅ AT LEAST ONE SUCCEEDED' : '❌ BOTH FAILED'
+  });
+
+  return {
+    success: overallSuccess,
+    services: results,
+    message: overallSuccess ? 
+      `Email delivery attempted via both services. ${results.sendgrid.success ? 'SendGrid succeeded' : ''} ${results.gmail.success ? 'Gmail succeeded' : ''}`.trim() :
+      'Both email services failed'
+  };
+};
+
+// Update the sendEmail function to use the class instance
+const sendEmail = async (to, subject, html, options = {}) => {
+  const { useService = 'both', fromName = 'Raffle System' } = options;
+
+  if (useService === 'sendgrid') {
+    // Use SendGrid only
+    const msg = {
+      to: to,
+      from: 'voicenotify2@gmail.com',
+      subject: subject,
+      html: html,
+    };
     await sgMail.send(msg);
-    console.log('✅ Email sent successfully via SendGrid API');
-    return true;
-  } catch (error) {
-    console.error('❌ SendGrid API error:', error);
-    throw error;
+    console.log('✅ Email sent via SendGrid (explicit)');
+    return { success: true, service: 'SendGrid' };
+  }
+  else if (useService === 'gmail') {
+    // Use Gmail only - FIXED: Use the class instance
+    const result = await gmailEmailService.sendEmail(to, subject, html, fromName);
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+    console.log('✅ Email sent via Gmail OAuth2 (explicit)');
+    return { success: true, service: 'Gmail OAuth2', messageId: result.messageId };
+  }
+  else if (useService === 'both') {
+    // Use BOTH services (for testing)
+    return await sendEmailBothServices(to, subject, html, fromName);
+  }
+  else {
+    // Auto with fallback
+    return await sendEmailWithFallback(to, subject, html, fromName);
   }
 };
 
-const emailService = require('../services/emailService'); // Adjust path as needed
+// Also update the fallback function
+const sendEmailWithFallback = async (to, subject, html, fromName = 'Raffle System') => {
+  const emailConfig = {
+    to: to,
+    subject: subject,
+    html: html,
+    fromName: fromName
+  };
+
+  // Try SendGrid first (primary)
+  try {
+    console.log('📧 Attempting to send email via SendGrid...');
+    
+    const msg = {
+      to: emailConfig.to,
+      from: 'voicenotify2@gmail.com',
+      subject: emailConfig.subject,
+      html: emailConfig.html,
+    };
+
+    await sgMail.send(msg);
+    console.log('✅ Email sent successfully via SendGrid API');
+    return { 
+      success: true, 
+      service: 'SendGrid',
+      message: 'Email sent successfully'
+    };
+  } catch (sendgridError) {
+    console.error('❌ SendGrid failed, falling back to Gmail OAuth2:', sendgridError.message);
+    
+    // Fallback to Gmail OAuth2 - FIXED: Use the class instance
+    try {
+      console.log('📧 Attempting to send email via Gmail OAuth2...');
+      
+      const gmailResult = await gmailEmailService.sendEmail(
+        emailConfig.to,
+        emailConfig.subject,
+        emailConfig.html,
+        emailConfig.fromName
+      );
+      
+      if (gmailResult.success) {
+        console.log('✅ Email sent successfully via Gmail OAuth2');
+        return { 
+          success: true, 
+          service: 'Gmail OAuth2',
+          message: 'Email sent successfully via fallback service',
+          messageId: gmailResult.messageId
+        };
+      } else {
+        throw new Error(gmailResult.error || 'Gmail service failed');
+      }
+    } catch (gmailError) {
+      console.error('❌ Both email services failed:', {
+        sendgrid: sendgridError.message,
+        gmail: gmailError.message
+      });
+      
+      return { 
+        success: false, 
+        service: 'Both',
+        error: `All email services failed: SendGrid - ${sendgridError.message}, Gmail - ${gmailError.message}`
+      };
+    }
+  }
+};
 
 // ======================= PURCHASE TICKETS =======================
 const purchaseTickets = async (req, res) => {
@@ -206,11 +375,11 @@ const purchaseTickets = async (req, res) => {
 
       console.log("📦 PURCHASE Order saved:", order._id);
 
-      // Send receipt email (non-blocking)
+      // Send receipt email (non-blocking) with DUAL SERVICE SUPPORT
       sendReceiptEmailNonBlocking(order, user, raffle, req.headers.origin)
         .then(result => {
           if (result.success) {
-            console.log("✅ PURCHASE Receipt email sent successfully");
+            console.log(`✅ PURCHASE Receipt email sent successfully via BOTH SERVICES`);
           } else {
             console.log("⚠️ PURCHASE Receipt email failed (non-critical):", result.error);
           }
@@ -244,10 +413,10 @@ const purchaseTickets = async (req, res) => {
   }
 };
 
-// Non-blocking email sending function
+// Non-blocking email sending function that sends via BOTH SERVICES
 async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
   try {
-    console.log("📧 PURCHASE Sending receipt email to:", user.email);
+    console.log("📧 PURCHASE Sending receipt email to BOTH SERVICES:", user.email);
 
     const frontendUrl = origin || 'https://raffle-system-lac.vercel.app';
     const orderLink = `${frontendUrl}/orders/${order._id}`;
@@ -309,18 +478,35 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
       <p>TicketStack Team</p>
     `;
 
-    await emailService.sendEmail(
+    // Use the DUAL SERVICE email function that sends via BOTH
+    const emailResult = await sendEmailBothServices(
       user.email,
       `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
-      emailHtml
+      emailHtml,
+      'TicketStack Raffle System'
     );
 
-    // Update order to mark receipt as sent
-    order.receiptSent = true;
+    // Update order with email sending results from BOTH services
+    order.receiptSent = emailResult.success;
     order.receiptSentAt = new Date();
+    order.emailServicesUsed = {
+      sendgrid: emailResult.services.sendgrid.success,
+      gmail: emailResult.services.gmail.success
+    };
+    order.emailServiceErrors = {
+      sendgrid: emailResult.services.sendgrid.error,
+      gmail: emailResult.services.gmail.error
+    };
+    
     await order.save();
 
-    return { success: true };
+    console.log('📊 DUAL EMAIL RESULTS SAVED TO ORDER:', {
+      orderId: order._id,
+      sendgrid: order.emailServicesUsed.sendgrid ? '✅' : '❌',
+      gmail: order.emailServicesUsed.gmail ? '✅' : '❌'
+    });
+
+    return emailResult;
 
   } catch (emailError) {
     console.error("❌ PURCHASE Error sending receipt email:", emailError.message);
@@ -328,13 +514,13 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
     // Update order with error information
     order.receiptSent = false;
     order.receiptError = emailError.message;
+    order.emailServicesUsed = { sendgrid: false, gmail: false };
     await order.save();
 
     return { success: false, error: emailError.message };
   }
 }
 
-// ... rest of your controller functions remain exactly the same ...
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
   const { title, description, startDate, endDate, price, category } = req.body;
@@ -556,6 +742,19 @@ const pickWinner = async (req, res) => {
 
     console.log(`🏆 Winner selected for "${raffle.title}": ${winner.username || winner.email}`);
 
+    // Send winner notification email (non-blocking) via BOTH SERVICES
+    sendWinnerEmailNonBlocking(winner, raffle, updatedRaffle)
+      .then(result => {
+        if (result.success) {
+          console.log(`✅ Winner notification sent via BOTH SERVICES`);
+        } else {
+          console.log("⚠️ Winner notification failed:", result.error);
+        }
+      })
+      .catch(error => {
+        console.error("⚠️ Winner email error:", error);
+      });
+
     res.json({
       message: "Winner selected successfully",
       winner: {
@@ -571,6 +770,68 @@ const pickWinner = async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
+// Winner notification email function - FIXED to use BOTH SERVICES
+async function sendWinnerEmailNonBlocking(winner, raffle, updatedRaffle) {
+  try {
+    console.log("🎉 Sending winner notification via BOTH SERVICES to:", winner.email);
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; color: white;">
+          <h1 style="margin: 0; font-size: 2.5em;">🎉 CONGRATULATIONS! 🎉</h1>
+          <p style="font-size: 1.2em; margin: 10px 0 0 0;">You've Won the Raffle!</p>
+        </div>
+        
+        <div style="padding: 30px; background: #f8f9fa;">
+          <h2 style="color: #333; margin-top: 0;">Hello ${winner.username || 'Winner'}!</h2>
+          <p style="font-size: 1.1em; color: #555;">
+            We're thrilled to inform you that you have been selected as the winner of:
+          </p>
+          
+          <div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #667eea;">
+            <h3 style="color: #333; margin: 0 0 10px 0;">${raffle.title}</h3>
+            <p style="color: #666; margin: 0;">${raffle.description || 'Thank you for participating!'}</p>
+          </div>
+          
+          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p style="margin: 0; color: #2d5016; font-weight: bold;">
+              🏆 You are our grand prize winner! 🏆
+            </p>
+          </div>
+          
+          <p style="color: #555;">
+            Our team will contact you shortly with details on how to claim your prize.
+            Please keep this email for your records.
+          </p>
+          
+          <p style="color: #555;">
+            If you have any questions, please reply to this email or contact our support team.
+          </p>
+        </div>
+        
+        <div style="background: #333; color: white; padding: 20px; text-align: center;">
+          <p style="margin: 0;">Thank you for participating in our raffle!</p>
+          <p style="margin: 10px 0 0 0; font-size: 0.9em; color: #ccc;">TicketStack Raffle System</p>
+        </div>
+      </div>
+    `;
+
+    // FIXED: Use sendEmailBothServices instead of sendEmailWithFallback
+    const emailResult = await sendEmailBothServices(
+      winner.email,
+      `🎉 You Won! ${raffle.title}`,
+      emailHtml,
+      'TicketStack Winners'
+    );
+
+    return emailResult;
+
+  } catch (error) {
+    console.error("❌ Error sending winner email:", error.message);
+    return { success: false, error: error.message };
+  }
+}
 
 // ======================= UPDATE RAFFLE STATUSES (Scheduled Job) =======================
 async function updateRaffleStatuses() {
@@ -673,5 +934,9 @@ module.exports = {
   pickWinner,
   getUserRaffles,
   updateRaffleStatuses,
-  exportRaffleCSV
+  exportRaffleCSV,
+  // Export email functions for use in other parts of your application
+  sendEmail,
+  sendEmailWithFallback,
+  sendEmailBothServices // Export the dual service function
 };
