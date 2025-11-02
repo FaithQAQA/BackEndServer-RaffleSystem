@@ -420,73 +420,62 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
 
     const frontendUrl = origin || 'https://raffle-system-lac.vercel.app';
     const orderLink = `${frontendUrl}/orders/${order._id}`;
-    
+    const orderIdShort = order._id.toString().slice(-8).toUpperCase();
+
+    // Full HTML email for better rendering
     const emailHtml = `
-      <p>Dear ${user.username || 'Valued Customer'},</p>
-      <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
-      
-      <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
-        <h3 style="color: #333; margin-top: 0;">Order Details</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">#${order._id.toString().slice(-8).toUpperCase()}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.paymentId}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${order.baseAmount.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right;">$${order.taxAmount.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${order.amount.toFixed(2)} CAD</td>
-          </tr>
-        </table>
-      </div>
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Purchase Confirmation</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; color: #333;">
+        <div style="max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 8px;">
+          <p>Dear ${user.username || 'Valued Customer'},</p>
+          <p>Thank you for your raffle ticket purchase! Your order has been confirmed.</p>
 
-      <p>You can view your order details here: <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a></p>
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0;">
+            <h3 style="color: #333; margin-top: 0;">Order Details</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Order Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">#${orderIdShort}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Transaction ID:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${order.paymentId}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Purchase Date:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Raffle:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${raffle.title}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Tickets Purchased:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${order.ticketsBought}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Price per Ticket:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">$${raffle.price.toFixed(2)}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Subtotal:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">$${order.baseAmount.toFixed(2)}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Tax (13%):</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">$${order.taxAmount.toFixed(2)}</td></tr>
+              <tr><td style="padding: 8px; border-bottom: 1px solid #ddd;"><strong>Total Amount:</strong></td><td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">$${order.amount.toFixed(2)} CAD</td></tr>
+            </table>
+          </div>
 
-      <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>📧 Need Help?</strong>
-        <p>If you have any questions about your purchase, please contact our support team with your Order Number #${order._id.toString().slice(-8).toUpperCase()}.</p>
-      </div>
+          <p>You can view your order details here:
+            <a href="${orderLink}" style="color: #007bff; text-decoration: none;">View Order</a>
+          </p>
 
-      <p>Best regards,</p>
-      <p>TicketStack Team</p>
+          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <strong>📧 Need Help?</strong>
+            <p>If you have any questions about your purchase, please contact our support team with your Order Number #${orderIdShort}.</p>
+          </div>
+
+          <p>Best regards,</p>
+          <p><strong>TicketStack Team</strong></p>
+        </div>
+      </body>
+      </html>
     `;
 
-    // Use the DUAL SERVICE email function that sends via BOTH
+    // Send via both services (SendGrid + Gmail)
     const emailResult = await sendEmailBothServices(
       user.email,
-      `Purchase Confirmation - Order #${order._id.toString().slice(-8).toUpperCase()}`,
+      `Purchase Confirmation - Order #${orderIdShort}`,
       emailHtml,
       'TicketStack Raffle System'
     );
 
-    // Update order with email sending results from BOTH services
+    // Save results to DB
     order.receiptSent = emailResult.success;
     order.receiptSentAt = new Date();
     order.emailServicesUsed = {
@@ -497,7 +486,6 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
       sendgrid: emailResult.services.sendgrid.error,
       gmail: emailResult.services.gmail.error
     };
-    
     await order.save();
 
     console.log('📊 DUAL EMAIL RESULTS SAVED TO ORDER:', {
@@ -510,8 +498,7 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
 
   } catch (emailError) {
     console.error("❌ PURCHASE Error sending receipt email:", emailError.message);
-    
-    // Update order with error information
+
     order.receiptSent = false;
     order.receiptError = emailError.message;
     order.emailServicesUsed = { sendgrid: false, gmail: false };
@@ -520,6 +507,7 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
     return { success: false, error: emailError.message };
   }
 }
+
 
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
