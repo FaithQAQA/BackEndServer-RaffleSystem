@@ -31,29 +31,28 @@ class EmailService {
           refreshToken: this.REFRESH_TOKEN,
           accessToken: accessToken.token,
         },
+        // Force Nodemailer to use HTTPS API, not SMTP
+        // This is key for Render
+        host: 'gmail.googleapis.com',
+        port: 443,
+        secure: true,
       });
 
       const mailOptions = {
         from: `${fromName} <${this.FROM_EMAIL}>`,
-        to: to,
-        subject: subject,
+        to,
+        subject,
         html: htmlContent,
-        // You can also add text version for non-HTML email clients
         text: htmlContent.replace(/<[^>]*>/g, ''),
       };
 
       const result = await transporter.sendMail(mailOptions);
-      console.log('✅ Email sent successfully:', result.messageId);
+      console.log('✅ Gmail API Email sent successfully:', result.messageId);
       return { success: true, messageId: result.messageId };
     } catch (error) {
-      console.error('❌ Error sending email:', error);
+      console.error('❌ Gmail API Error sending email:', error);
       return { success: false, error: error.message };
     }
-  }
-
-  // Optional: Method for sending to multiple recipients
-  async sendBulkEmail(recipients, subject, htmlContent, fromName = 'Raffle System') {
-    return this.sendEmail(recipients.join(', '), subject, htmlContent, fromName);
   }
 }
 
