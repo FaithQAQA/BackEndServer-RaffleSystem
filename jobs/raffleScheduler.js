@@ -446,7 +446,7 @@ async function sendWinnerEmail(user, raffle) {
 
     await sendEmail(
       user.email,
-      `🎉 Congratulations! You won the raffle: ${raffle.title} - TicketStack`,
+      ` Congratulations! You won the raffle: ${raffle.title} - TicketStack`,
       emailHtml
     );
 
