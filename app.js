@@ -16,6 +16,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5000',
   'http://localhost:4200',
+  'https://backendserver-euba.onrender.com'
 ];
 
 const corsOptions = {
