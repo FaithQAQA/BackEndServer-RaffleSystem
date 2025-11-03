@@ -579,21 +579,28 @@ const getAllRaffles = async (req, res) => {
 const getUserRaffles = async (req, res) => {
   try {
     const { userId } = req.params;
- 
+
     // Validate user ID
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ message: "Invalid user ID" });
     }
- 
+
     // Find raffles where user participated
     const raffles = await Raffle.find({ "participants.userId": userId })
       .sort({ createdAt: -1 })
       .populate("winner", "name email")
       .populate("participants.userId", "name email");
- 
-    // Format raffles with user-specific info
+
+    // Format raffles with user-specific info - FIXED: Add null checks
     const userRaffles = raffles.map(r => {
-      const didUserWin = r.winner && r.winner._id.toString() === userId;
+      // FIX: Check if userId exists and has _id before comparing
+      const userParticipant = r.participants.find(p => 
+        p.userId && p.userId._id && p.userId._id.toString() === userId
+      );
+      
+      // FIX: Check if winner exists before accessing properties
+      const didUserWin = r.winner && r.winner._id && r.winner._id.toString() === userId;
+      
       return {
         _id: r._id,
         title: r.title,
@@ -601,19 +608,22 @@ const getUserRaffles = async (req, res) => {
         status: r.status,
         endDate: r.endDate,
         totalTicketsSold: r.totalTicketsSold,
-        ticketsBought: r.participants.find(p => p.userId._id.toString() === userId)?.ticketsBought || 0,
-        winner: r.winner ? { id: r.winner._id, name: r.winner.name, email: r.winner.email } : null,
+        ticketsBought: userParticipant ? userParticipant.ticketsBought : 0,
+        winner: r.winner ? { 
+          id: r.winner._id, 
+          name: r.winner.name, 
+          email: r.winner.email 
+        } : null,
         didUserWin
       };
     });
- 
+
     res.json(userRaffles);
   } catch (err) {
     console.error("Error fetching user raffles:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 // ======================= GET RECENT RAFFLES =======================
 const getRecentRaffles = async (req, res) => {
   try {
