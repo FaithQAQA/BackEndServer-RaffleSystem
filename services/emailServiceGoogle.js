@@ -22,15 +22,18 @@ class EmailService {
     this.SENDGRID_FROM_EMAIL = 'voicenotify2@gmail.com'; // same from email
   }
 
-  // ---------- Gmail API Send ----------
+  // ---------- Gmail API Send (HTML supported) ----------
   async sendGmail(to, subject, htmlContent) {
     try {
       const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
 
+      // Proper MIME headers for HTML
       const rawMessage = Buffer.from(
-        `From: Raffle System <${this.GMAIL_FROM_EMAIL}>\r\n` +
+        `From: "Raffle System" <${this.GMAIL_FROM_EMAIL}>\r\n` +
         `To: ${to}\r\n` +
-        `Subject: ${subject}\r\n\r\n` +
+        `Subject: ${subject}\r\n` +
+        `MIME-Version: 1.0\r\n` +
+        `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
         `${htmlContent}`
       )
         .toString('base64')
@@ -58,11 +61,15 @@ class EmailService {
         from: this.SENDGRID_FROM_EMAIL,
         subject,
         html: htmlContent,
-        text: htmlContent.replace(/<[^>]*>/g, ''),
+        text: htmlContent.replace(/<[^>]*>/g, ''), // fallback plain text
       };
 
       const res = await sgMail.send(msg);
-      return { success: true, service: 'sendgrid', messageId: res[0].headers['x-message-id'] };
+      return {
+        success: true,
+        service: 'sendgrid',
+        messageId: res[0].headers['x-message-id'],
+      };
     } catch (error) {
       console.error('❌ SendGrid Error:', error.message || error);
       return { success: false, service: 'sendgrid', error: error.message };
@@ -73,11 +80,25 @@ class EmailService {
   async sendEmail(to, subject, htmlContent) {
     const gmailResult = await this.sendGmail(to, subject, htmlContent);
 
-    if (gmailResult.success) return gmailResult;
+    if (gmailResult.success) {
+      console.log('✅ Email sent via Gmail:', gmailResult.messageId);
+      return gmailResult;
+    }
 
-    // Fallback to SendGrid if Gmail fails
+    console.warn('⚠️ Gmail failed, attempting SendGrid...');
     const sendGridResult = await this.sendSendGrid(to, subject, htmlContent);
-    return sendGridResult.success ? sendGridResult : { success: false, error: 'Both services failed', details: [gmailResult, sendGridResult] };
+
+    if (sendGridResult.success) {
+      console.log('✅ Email sent via SendGrid:', sendGridResult.messageId);
+      return sendGridResult;
+    }
+
+    console.error('❌ Both Gmail and SendGrid failed.');
+    return {
+      success: false,
+      error: 'Both services failed',
+      details: [gmailResult, sendGridResult],
+    };
   }
 }
 

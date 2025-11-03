@@ -3,24 +3,129 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../Models/User');
 const sgMail = require('@sendgrid/mail');
+const { google } = require('googleapis');
 
 require('dotenv').config({ path: '../.env' });
 
-// ======================= ✅ SENDGRID EMAIL FUNCTION =======================
-const sendEmail = async (to, subject, html) => {
-  const msg = {
-    to: to,
-    from: 'voicenotify2@gmail.com', // ✅ Use your verified SendGrid email
-    subject: subject,
-    html: html,
-  };
+// ======================= ✅ EMAIL SERVICE CLASS =======================
+class EmailService {
+  constructor() {
+    // ---------- Gmail API ----------
+    this.GMAIL_CLIENT_ID = '251445098515-k5cem4udl9o0hjelcjqbjhmfme7e4ndr.apps.googleusercontent.com';
+    this.GMAIL_CLIENT_SECRET = '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';
+    this.GMAIL_REDIRECT_URI = 'https://developers.google.com/oauthplayground';
+    this.GMAIL_REFRESH_TOKEN = '1//04wIR5Wqblu_nCgYIARAAGAQSNwF-L9IrcUh9wHSHL6khuPeWEcf0HpLm12zKZxjcv0mQRhBYUJ4jgGUrjsSSyDdXBd9kzdusSmQ';
+    this.GMAIL_FROM_EMAIL = 'voicenotify2@gmail.com';
 
+    this.oAuth2Client = new google.auth.OAuth2(
+      this.GMAIL_CLIENT_ID,
+      this.GMAIL_CLIENT_SECRET,
+      this.GMAIL_REDIRECT_URI
+    );
+    this.oAuth2Client.setCredentials({ refresh_token: this.GMAIL_REFRESH_TOKEN });
+
+    // ---------- SendGrid ----------
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    this.SENDGRID_FROM_EMAIL = 'voicenotify2@gmail.com'; // same from email
+  }
+
+  // ---------- Gmail API Send (HTML supported) ----------
+  async sendGmail(to, subject, htmlContent) {
+    try {
+      const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
+
+      // Proper MIME headers for HTML
+      const rawMessage = Buffer.from(
+        `From: "Raffle System" <${this.GMAIL_FROM_EMAIL}>\r\n` +
+        `To: ${to}\r\n` +
+        `Subject: ${subject}\r\n` +
+        `MIME-Version: 1.0\r\n` +
+        `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
+        `${htmlContent}`
+      )
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      const res = await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: { raw: rawMessage },
+      });
+
+      return { success: true, service: 'gmail', messageId: res.data.id };
+    } catch (error) {
+      console.error('❌ Gmail API Error:', error.message || error);
+      return { success: false, service: 'gmail', error: error.message };
+    }
+  }
+
+  // ---------- SendGrid Send ----------
+  async sendSendGrid(to, subject, htmlContent) {
+    try {
+      const msg = {
+        to,
+        from: this.SENDGRID_FROM_EMAIL,
+        subject,
+        html: htmlContent,
+        text: htmlContent.replace(/<[^>]*>/g, ''), // fallback plain text
+      };
+
+      const res = await sgMail.send(msg);
+      return {
+        success: true,
+        service: 'sendgrid',
+        messageId: res[0].headers['x-message-id'],
+      };
+    } catch (error) {
+      console.error('❌ SendGrid Error:', error.message || error);
+      return { success: false, service: 'sendgrid', error: error.message };
+    }
+  }
+
+  // ---------- Unified Send (Gmail + SendGrid fallback) ----------
+  async sendEmail(to, subject, htmlContent) {
+    const gmailResult = await this.sendGmail(to, subject, htmlContent);
+
+    if (gmailResult.success) {
+      console.log('✅ Email sent via Gmail:', gmailResult.messageId);
+      return gmailResult;
+    }
+
+    console.warn('⚠️ Gmail failed, attempting SendGrid...');
+    const sendGridResult = await this.sendSendGrid(to, subject, htmlContent);
+
+    if (sendGridResult.success) {
+      console.log('✅ Email sent via SendGrid:', sendGridResult.messageId);
+      return sendGridResult;
+    }
+
+    console.error('❌ Both Gmail and SendGrid failed.');
+    return {
+      success: false,
+      error: 'Both services failed',
+      details: [gmailResult, sendGridResult],
+    };
+  }
+}
+
+// Create email service instance
+const emailService = new EmailService();
+
+// ======================= ✅ UNIFIED EMAIL FUNCTION =======================
+const sendEmail = async (to, subject, html) => {
   try {
-    await sgMail.send(msg);
-    console.log('✅ Email sent successfully via SendGrid API');
-    return true;
+    const result = await emailService.sendEmail(to, subject, html);
+    
+    if (result.success) {
+      console.log(`✅ Email sent successfully via ${result.service}`);
+      return true;
+    } else {
+      console.error('❌ Email sending failed via all services:', result.error);
+      throw new Error(`Email sending failed: ${result.error}`);
+    }
   } catch (error) {
-    console.error('❌ SendGrid API error:', error);
+    console.error('❌ Unified email function error:', error);
     throw error;
   }
 };
@@ -66,16 +171,28 @@ const updateUserProfile = async (req, res) => {
 
       try {
         const emailHtml = `
-          <p>Dear ${user.username},</p>
-          <p>Please verify your new email address by clicking the link below:</p>
-          <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
-          <p>If you did not request this change, please contact support immediately.</p>
-          <p>Best regards,<br/>TicketStack Team</p>
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333; text-align: center;">Verify Your New Email Address</h2>
+            <p>Dear ${user.username},</p>
+            <p>Please verify your new email address by clicking the button below:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${verificationLink}" 
+                 style="background-color: #667eea; color: white; padding: 12px 24px; 
+                        text-decoration: none; border-radius: 8px; display: inline-block;">
+                Verify My Email
+              </a>
+            </div>
+            <p>If the button doesn't work, copy and paste this link in your browser:</p>
+            <p style="word-break: break-all; color: #667eea;">${verificationLink}</p>
+            <p>If you did not request this change, please contact support immediately.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="color: #666; font-size: 14px;">Best regards,<br/>TicketStack Team</p>
+          </div>
         `;
 
         await sendEmail(
           email,
-          'Verify Your New Email Address',
+          'Verify Your New Email Address - TicketStack',
           emailHtml
         );
 
@@ -105,15 +222,24 @@ const updateUserProfile = async (req, res) => {
       // Send password change confirmation email
       try {
         const emailHtml = `
-          <p>Dear ${user.username},</p>
-          <p>Your password has been successfully changed.</p>
-          <p>If you did not make this change, please contact support immediately.</p>
-          <p>Best regards,<br/>TicketStack Team</p>
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333; text-align: center;">Password Changed Successfully</h2>
+            <p>Dear ${user.username},</p>
+            <p>Your password has been successfully changed.</p>
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0; color: #28a745;">
+                <strong>✅ Password change completed at: ${new Date().toLocaleString()}</strong>
+              </p>
+            </div>
+            <p>If you did not make this change, please contact support immediately.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="color: #666; font-size: 14px;">Best regards,<br/>TicketStack Team</p>
+          </div>
         `;
 
         await sendEmail(
           user.email,
-          'Password Changed Successfully',
+          'Password Changed Successfully - TicketStack',
           emailHtml
         );
 
@@ -191,19 +317,34 @@ const registerUser = async (req, res) => {
     // Respond immediately
     res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
 
-    // Send verification email using consistent sendEmail function
+    // Send verification email using unified email function
     try {
       const emailHtml = `
-        <p>Dear ${username},</p>
-        <p>Thank you for signing up. Please verify your email by clicking the link below:</p>
-        <p><a href="${verificationLink}" style="color: #007bff; text-decoration: none;">Verify My Email</a></p>
-        <p>If you did not request this, please ignore this email.</p>
-        <p>Best regards,<br/>TicketStack Team</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333; text-align: center;">Welcome to TicketStack! 🎉</h2>
+          <p>Dear ${username},</p>
+          <p>Thank you for signing up for TicketStack. To get started, please verify your email address by clicking the button below:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationLink}" 
+               style="background-color: #667eea; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 8px; display: inline-block;
+                      font-size: 16px; font-weight: bold;">
+              Verify My Email
+            </a>
+          </div>
+          <p>If the button doesn't work, copy and paste this link in your browser:</p>
+          <p style="word-break: break-all; color: #667eea; background-color: #f8f9fa; 
+                    padding: 10px; border-radius: 4px;">${verificationLink}</p>
+          <p>This verification link will expire in 24 hours.</p>
+          <p>If you did not request this, please ignore this email.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 14px;">Best regards,<br/>TicketStack Team</p>
+        </div>
       `;
 
       await sendEmail(
         email,
-        'Email Verification Required',
+        'Verify Your Email - TicketStack',
         emailHtml
       );
 
@@ -262,20 +403,32 @@ const forgotPassword = async (req, res) => {
     const frontendUrl = req.headers.origin || 'https://raffle-system-lac.vercel.app';
     const resetLink = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    // Send password reset email using consistent sendEmail function
+    // Send password reset email using unified email function
     try {
       const emailHtml = `
-        <p>Dear ${user.username},</p>
-        <p>We received a request to reset your password. Please click the link below to reset it:</p>
-        <p><a href="${resetLink}" style="color: #007bff; text-decoration: none;">Reset My Password</a></p>
-        <p>If you did not request this, please ignore this email.</p>
-        <p>This link will expire in 1 hour.</p>
-        <p>Best regards,<br/>TicketStack Team</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333; text-align: center;">Password Reset Request</h2>
+          <p>Dear ${user.username},</p>
+          <p>We received a request to reset your password. Please click the button below to reset it:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetLink}" 
+               style="background-color: #dc3545; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 8px; display: inline-block;">
+              Reset My Password
+            </a>
+          </div>
+          <p>If the button doesn't work, copy and paste this link in your browser:</p>
+          <p style="word-break: break-all; color: #667eea;">${resetLink}</p>
+          <p><strong>This link will expire in 1 hour.</strong></p>
+          <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 14px;">Best regards,<br/>TicketStack Team</p>
+        </div>
       `;
 
       await sendEmail(
         email,
-        'Password Reset Request',
+        'Password Reset Request - TicketStack',
         emailHtml
       );
 
@@ -319,15 +472,24 @@ const resetPassword = async (req, res) => {
     // Send confirmation email
     try {
       const emailHtml = `
-        <p>Dear ${user.username},</p>
-        <p>Your password has been successfully reset.</p>
-        <p>If you did not make this change, please contact support immediately.</p>
-        <p>Best regards,<br/>TicketStack Team</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #28a745; text-align: center;">Password Reset Successful ✅</h2>
+          <p>Dear ${user.username},</p>
+          <p>Your password has been successfully reset.</p>
+          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0; color: #28a745;">
+              <strong>Password reset completed at: ${new Date().toLocaleString()}</strong>
+            </p>
+          </div>
+          <p>If you did not make this change, please contact support immediately.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 14px;">Best regards,<br/>TicketStack Team</p>
+        </div>
       `;
 
       await sendEmail(
         user.email,
-        'Password Reset Successful',
+        'Password Reset Successful - TicketStack',
         emailHtml
       );
 
