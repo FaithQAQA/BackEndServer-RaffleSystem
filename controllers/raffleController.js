@@ -266,7 +266,9 @@ const sendEmailWithFallback = async (to, subject, html, fromName = 'Raffle Syste
   }
 };
 
-// ======================= PURCHASE TICKETS =======================
+
+
+// ======================= PURCHASE TICKETS (CONSOLIDATED EMAIL) =======================
 const purchaseTickets = async (req, res) => {
   let session = await mongoose.startSession();
   session.startTransaction();
@@ -277,14 +279,26 @@ const purchaseTickets = async (req, res) => {
 
     console.log("🛒 PURCHASE Incoming request:", { userId, ticketsBought, raffleId });
 
+    // Validate payment token
+    if (!paymentToken || paymentToken === 'undefined' || paymentToken === 'null' || paymentToken === '') {
+      console.log("❌ PURCHASE Invalid or missing payment token");
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        error: "Invalid payment token. Please refresh the page and try again.",
+        shouldRetry: true
+      });
+    }
+
     // Validate input parameters
-    if (!userId || !ticketsBought || !paymentToken) {
+    if (!userId || !ticketsBought) {
       console.log("❌ PURCHASE Missing required fields");
-      return res.status(400).json({ error: "Missing required fields: userId, ticketsBought, paymentToken" });
+      await session.abortTransaction();
+      return res.status(400).json({ error: "Missing required fields: userId, ticketsBought" });
     }
 
     if (!Number.isInteger(ticketsBought) || ticketsBought <= 0) {
       console.log("❌ PURCHASE Invalid ticket quantity:", ticketsBought);
+      await session.abortTransaction();
       return res.status(400).json({ error: "Ticket quantity must be a positive integer" });
     }
 
@@ -391,6 +405,7 @@ const purchaseTickets = async (req, res) => {
     const idempotencyKey = clientKey || crypto.randomUUID();
 
     console.log("💳 PURCHASE Processing payment with idempotency key:", idempotencyKey);
+    console.log("💳 PURCHASE Payment token (first 10 chars):", paymentToken.substring(0, 10) + '...');
     
     try {
       const paymentResult = await squareAPI.createPayment({
@@ -480,18 +495,46 @@ const purchaseTickets = async (req, res) => {
       await session.commitTransaction();
       console.log("📦 PURCHASE Order saved and transaction committed:", order._id);
 
-      // Send receipt email (non-blocking) - outside transaction
-      sendReceiptEmailNonBlocking(order, user, raffle, req.headers.origin)
-        .then(result => {
-          if (result.success) {
-            console.log(`✅ PURCHASE Receipt email sent successfully via BOTH SERVICES`);
-          } else {
-            console.log("⚠️ PURCHASE Receipt email failed (non-critical):", result.error);
-          }
-        })
-        .catch(error => {
-          console.error("⚠️ PURCHASE Email sending error:", error);
-        });
+      // Check if this is part of a multi-purchase by looking for pending orders
+      const pendingOrders = await Order.find({
+        userId: userId,
+        receiptSent: false,
+        createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) } // Last 5 minutes
+      }).populate('raffleId').sort({ createdAt: 1 });
+
+      console.log(`📊 Found ${pendingOrders.length} pending orders for user ${userId}`);
+
+      // If multiple pending orders, send consolidated email
+      if (pendingOrders.length > 1) {
+        console.log("📧 Sending consolidated email for multiple orders");
+        sendConsolidatedReceiptEmailNonBlocking(pendingOrders, user, req.headers.origin)
+          .then(result => {
+            if (result.success) {
+              console.log(`✅ Consolidated receipt email sent successfully for ${pendingOrders.length} orders`);
+              // Mark all orders as receipt sent
+              markOrdersAsSent(pendingOrders.map(o => o._id));
+            } else {
+              console.log("⚠️ Consolidated receipt email failed:", result.error);
+            }
+          })
+          .catch(error => {
+            console.error("⚠️ Consolidated email sending error:", error);
+          });
+      } else {
+        // Single order - send individual email
+        console.log("📧 Sending individual receipt email");
+        sendReceiptEmailNonBlocking(order, user, raffle, req.headers.origin)
+          .then(result => {
+            if (result.success) {
+              console.log(`✅ Individual receipt email sent successfully`);
+            } else {
+              console.log("⚠️ Individual receipt email failed:", result.error);
+            }
+          })
+          .catch(error => {
+            console.error("⚠️ Individual email sending error:", error);
+          });
+      }
 
       // Return success response
       res.json({
@@ -506,16 +549,18 @@ const purchaseTickets = async (req, res) => {
         ticketsBought: ticketsBought,
         receiptEmail: user.email,
         receiptSent: false, // Will be updated async
-        squareReceiptUrl: payment.receiptUrl
+        squareReceiptUrl: payment.receiptUrl,
+        isMultiPurchase: pendingOrders.length > 1,
+        totalOrders: pendingOrders.length
       });
 
     } catch (squareError) {
       await session.abortTransaction();
       console.error("❌ PURCHASE Square API error:", squareError);
       
-      // Parse Square error for better user feedback
       let errorMessage = "Payment processing failed";
       let statusCode = 500;
+      let shouldRetry = false;
       
       if (squareError.errors && squareError.errors.length > 0) {
         const squareErrorDetail = squareError.errors[0];
@@ -534,12 +579,30 @@ const purchaseTickets = async (req, res) => {
         } else if (squareErrorDetail.code === 'INSUFFICIENT_FUNDS') {
           statusCode = 400;
           errorMessage = "Insufficient funds. Please try a different payment method.";
+        } else if (squareErrorDetail.code === 'CARD_TOKEN_USED' || squareErrorDetail.code === 'IDEMPOTENCY_KEY_REUSED') {
+          statusCode = 400;
+          errorMessage = "Payment session expired. Please refresh the page and try again.";
+          shouldRetry = true;
+        } else if (squareErrorDetail.code === 'INVALID_CARD') {
+          statusCode = 400;
+          errorMessage = "Invalid card details. Please check your card information.";
+        } else if (squareErrorDetail.code === 'GENERIC_DECLINE') {
+          statusCode = 400;
+          errorMessage = "Card was declined. Please try a different payment method.";
+        } else if (squareErrorDetail.code === 'EXPIRATION_FAILURE') {
+          statusCode = 400;
+          errorMessage = "Card expiration date is invalid or has passed.";
         }
+      } else if (squareError.message && squareError.message.includes('already used')) {
+        statusCode = 400;
+        errorMessage = "Payment session expired. Please refresh the page and try again.";
+        shouldRetry = true;
       }
       
       return res.status(statusCode).json({ 
         error: errorMessage,
-        details: squareError.message 
+        details: squareError.message,
+        shouldRetry: shouldRetry
       });
     }
 
@@ -555,7 +618,150 @@ const purchaseTickets = async (req, res) => {
   }
 };
 
-// Enhanced email function with retry logic
+// Consolidated email function for multiple orders
+async function sendConsolidatedReceiptEmailNonBlocking(orders, user, origin) {
+  const maxRetries = 2;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`📧 PURCHASE Attempt ${attempt}/${maxRetries}: Sending consolidated receipt email for ${orders.length} orders to:`, user.email);
+
+      const frontendUrl = origin || 'https://raffle-system-lac.vercel.app';
+      
+      const emailHtml = generateConsolidatedReceiptEmailHtml(orders, user, frontendUrl);
+
+      // Use the DUAL SERVICE email function with timeout
+      const emailResult = await Promise.race([
+        sendEmailBothServices(
+          user.email,
+          `Purchase Confirmation - ${orders.length} Order${orders.length > 1 ? 's' : ''}`,
+          emailHtml,
+          'TicketStack Raffle System'
+        ),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Email sending timeout')), 30000)
+        )
+      ]);
+
+      if (emailResult.success) {
+        console.log(`✅ Consolidated email sent successfully for ${orders.length} orders`);
+        return emailResult;
+      }
+
+      lastError = emailResult.error;
+      
+      // Wait before retry (exponential backoff)
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000); // Max 10 seconds
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+    } catch (emailError) {
+      lastError = emailError;
+      console.error(`❌ PURCHASE Consolidated email attempt ${attempt} failed:`, emailError.message);
+      
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  // All retries failed
+  console.error("❌ PURCHASE All consolidated email attempts failed:", lastError?.message);
+  return { success: false, error: lastError?.message || 'Consolidated email sending failed' };
+}
+
+// Helper function to mark orders as receipt sent
+async function markOrdersAsSent(orderIds) {
+  try {
+    await Order.updateMany(
+      { _id: { $in: orderIds } },
+      { 
+        receiptSent: true,
+        receiptSentAt: new Date()
+      }
+    );
+    console.log(`✅ Marked ${orderIds.length} orders as receipt sent`);
+  } catch (error) {
+    console.error("❌ Error marking orders as receipt sent:", error);
+  }
+}
+
+// Generate consolidated email HTML for multiple orders
+function generateConsolidatedReceiptEmailHtml(orders, user, frontendUrl) {
+  const totalAmount = orders.reduce((sum, order) => sum + order.amount, 0);
+  const totalTickets = orders.reduce((sum, order) => sum + order.ticketsBought, 0);
+  
+  const ordersHtml = orders.map(order => `
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #667eea;">
+      <h4 style="margin: 0 0 10px 0; color: #333;">${order.metadata?.raffleTitle || 'Raffle'}</h4>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <tr>
+          <td style="padding: 4px 0;"><strong>Order #:</strong></td>
+          <td style="padding: 4px 0; text-align: right;">${order._id.toString().slice(-8).toUpperCase()}</td>
+        </tr>
+        <tr>
+          <td style="padding: 4px 0;"><strong>Tickets:</strong></td>
+          <td style="padding: 4px 0; text-align: right;">${order.ticketsBought}</td>
+        </tr>
+        <tr>
+          <td style="padding: 4px 0;"><strong>Price per Ticket:</strong></td>
+          <td style="padding: 4px 0; text-align: right;">$${order.metadata?.rafflePrice?.toFixed(2) || '0.00'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 4px 0;"><strong>Amount:</strong></td>
+          <td style="padding: 4px 0; text-align: right;">$${order.amount.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 4px 0;"><strong>View Order:</strong></td>
+          <td style="padding: 4px 0; text-align: right;">
+            <a href="${frontendUrl}/orders/${order._id}" style="color: #007bff; text-decoration: none;">Details</a>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `).join('');
+
+  return `
+    <p>Dear ${user.username || 'Valued Customer'},</p>
+    <p>Thank you for your raffle ticket purchases! Your orders have been confirmed.</p>
+    
+    <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <h3 style="color: #2d5016; margin-top: 0;">Purchase Summary</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9;"><strong>Total Orders:</strong></td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9; text-align: right;">${orders.length}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9;"><strong>Total Tickets:</strong></td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9; text-align: right;">${totalTickets}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9;"><strong>Total Amount:</strong></td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #c8e6c9; text-align: right; font-weight: bold;">$${totalAmount.toFixed(2)} CAD</td>
+        </tr>
+      </table>
+    </div>
+
+    <h3 style="color: #333; margin: 20px 0 10px 0;">Order Details</h3>
+    ${ordersHtml}
+
+    <p>You can view all your orders here: <a href="${frontendUrl}/orders" style="color: #007bff; text-decoration: none;">View All Orders</a></p>
+
+    <div style="background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+      <strong>📧 Need Help?</strong>
+      <p>If you have any questions about your purchases, please contact our support team with your Order Numbers.</p>
+    </div>
+
+    <p>Best regards,</p>
+    <p>TicketStack Team</p>
+  `;
+}
+
+// Keep the individual email function for single purchases
 async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
   const maxRetries = 2;
   let lastError = null;
@@ -637,7 +843,7 @@ async function sendReceiptEmailNonBlocking(order, user, raffle, origin) {
   return { success: false, error: lastError?.message || 'Email sending failed' };
 }
 
-// Helper function for email template
+// Keep the individual email template function
 function generateReceiptEmailHtml(order, user, raffle, orderLink) {
   return `
     <p>Dear ${user.username || 'Valued Customer'},</p>
@@ -696,6 +902,7 @@ function generateReceiptEmailHtml(order, user, raffle, orderLink) {
     <p>TicketStack Team</p>
   `;
 }
+
 
 // ======================= CREATE RAFFLE =======================
 const createRaffle = async (req, res) => {
