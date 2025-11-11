@@ -1,203 +1,240 @@
 const Order = require("../Models/Order");
 
-// Get monthly sales (existing - improved)
+// Main controller functions
 const getMonthlySales = async (req, res) => {
   try {
-    const { year } = req.query; // Optional year filter
-    
-    const matchStage = {};
-    if (year) {
-      matchStage.createdAt = {
-        $gte: new Date(`${year}-01-01`),
-        $lt: new Date(`${parseInt(year) + 1}-01-01`)
-      };
-    }
-
-    const sales = await Order.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: { 
-            year: { $year: "$createdAt" }, 
-            month: { $month: "$createdAt" } 
-          },
-          totalSales: { $sum: "$amount" },
-          totalBaseAmount: { $sum: "$baseAmount" },
-          totalTaxAmount: { $sum: "$taxAmount" },
-          totalOrders: { $sum: 1 },
-          totalTickets: { $sum: "$ticketsBought" }
-        }
-      },
-      {
-        $sort: { "_id.year": 1, "_id.month": 1 }
-      }
-    ]);
-
-    const formatted = sales.map((s) => ({
-      year: s._id.year,
-      month: s._id.month,
-      totalSales: s.totalSales,
-      totalBaseAmount: s.totalBaseAmount,
-      totalTaxAmount: s.totalTaxAmount,
-      totalOrders: s.totalOrders,
-      totalTickets: s.totalTickets,
-      averageOrderValue: s.totalOrders > 0 ? (s.totalSales / s.totalOrders).toFixed(2) : 0
-    }));
-
-    res.json(formatted);
+    const { year } = req.query;
+    const salesData = await fetchMonthlySalesData(year);
+    const formattedSales = formatMonthlySalesData(salesData);
+    res.json(formattedSales);
   } catch (error) {
-    console.error("Error fetching monthly sales:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching monthly sales");
   }
 };
 
-// Get sales by raffle
 const getSalesByRaffle = async (req, res) => {
   try {
-    const sales = await Order.aggregate([
-      {
-        $lookup: {
-          from: "raffles",
-          localField: "raffleId",
-          foreignField: "_id",
-          as: "raffle"
-        }
-      },
-      { $unwind: "$raffle" },
-      {
-        $group: {
-          _id: "$raffleId",
-          raffleName: { $first: "$raffle.title" },
-          totalSales: { $sum: "$amount" },
-          totalTickets: { $sum: "$ticketsBought" },
-          totalOrders: { $sum: 1 }
-        }
-      },
-      { $sort: { totalSales: -1 } }
-    ]);
-
-    res.json(sales);
+    const raffleSales = await fetchSalesByRaffle();
+    res.json(raffleSales);
   } catch (error) {
-    console.error("Error fetching sales by raffle:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching sales by raffle");
   }
 };
 
-// Get user order history
 const getUserOrderHistory = async (req, res) => {
   try {
     const { userId } = req.params;
-    
-    const orders = await Order.find({ userId })
-      .populate("raffleId", "title drawDate ticketPrice")
-      .sort({ createdAt: -1 });
-
-    const formattedOrders = orders.map(order => order.getOrderSummary());
-    
+    const orders = await fetchUserOrders(userId);
+    const formattedOrders = formatUserOrders(orders);
     res.json(formattedOrders);
   } catch (error) {
-    console.error("Error fetching user order history:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching user order history");
   }
 };
 
-// Get daily sales for a specific period
 const getDailySales = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    
-    const matchStage = {};
-    if (startDate && endDate) {
-      matchStage.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    }
-
-    const sales = await Order.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: {
-            year: { $year: "$createdAt" },
-            month: { $month: "$createdAt" },
-            day: { $dayOfMonth: "$createdAt" }
-          },
-          totalSales: { $sum: "$amount" },
-          totalOrders: { $sum: 1 },
-          totalTickets: { $sum: "$ticketsBought" }
-        }
-      },
-      {
-        $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 }
-      }
-    ]);
-
-    const formatted = sales.map(s => ({
-      date: `${s._id.year}-${s._id.month.toString().padStart(2, '0')}-${s._id.day.toString().padStart(2, '0')}`,
-      totalSales: s.totalSales,
-      totalOrders: s.totalOrders,
-      totalTickets: s.totalTickets
-    }));
-
-    res.json(formatted);
+    const dailySales = await fetchDailySalesData(startDate, endDate);
+    const formattedSales = formatDailySalesData(dailySales);
+    res.json(formattedSales);
   } catch (error) {
-    console.error("Error fetching daily sales:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching daily sales");
   }
 };
 
-// Get orders that need receipt (for cron job or admin)
 const getPendingReceipts = async (req, res) => {
   try {
-    const orders = await Order.find({ 
-      receiptSent: false,
-      status: "completed"
-    })
-    .populate("userId", "email name")
-    .populate("raffleId", "title")
-    .sort({ createdAt: 1 });
-
-    res.json(orders);
+    const pendingOrders = await fetchPendingReceiptOrders();
+    res.json(pendingOrders);
   } catch (error) {
-    console.error("Error fetching pending receipts:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching pending receipts");
   }
 };
 
-// Get overall statistics
 const getSalesStatistics = async (req, res) => {
   try {
-    const stats = await Order.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$amount" },
-          totalBaseAmount: { $sum: "$baseAmount" },
-          totalTaxAmount: { $sum: "$taxAmount" },
-          totalOrders: { $sum: 1 },
-          totalTicketsSold: { $sum: "$ticketsBought" },
-          averageOrderValue: { $avg: "$amount" },
-          averageTicketsPerOrder: { $avg: "$ticketsBought" }
-        }
-      }
-    ]);
-
-    const result = stats[0] || {
-      totalRevenue: 0,
-      totalBaseAmount: 0,
-      totalTaxAmount: 0,
-      totalOrders: 0,
-      totalTicketsSold: 0,
-      averageOrderValue: 0,
-      averageTicketsPerOrder: 0
-    };
-
-    res.json(result);
+    const statistics = await fetchSalesStatistics();
+    res.json(statistics);
   } catch (error) {
-    console.error("Error fetching sales statistics:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    handleServerError(res, error, "Error fetching sales statistics");
   }
+};
+
+// Data fetching functions
+const fetchMonthlySalesData = async (year) => {
+  const matchStage = buildDateMatchStageForYear(year);
+  
+  return await Order.aggregate([
+    { $match: matchStage },
+    {
+      $group: {
+        _id: { 
+          year: { $year: "$createdAt" }, 
+          month: { $month: "$createdAt" } 
+        },
+        totalSales: { $sum: "$amount" },
+        totalBaseAmount: { $sum: "$baseAmount" },
+        totalTaxAmount: { $sum: "$taxAmount" },
+        totalOrders: { $sum: 1 },
+        totalTickets: { $sum: "$ticketsBought" }
+      }
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1 } }
+  ]);
+};
+
+const fetchSalesByRaffle = async () => {
+  return await Order.aggregate([
+    {
+      $lookup: {
+        from: "raffles",
+        localField: "raffleId",
+        foreignField: "_id",
+        as: "raffle"
+      }
+    },
+    { $unwind: "$raffle" },
+    {
+      $group: {
+        _id: "$raffleId",
+        raffleName: { $first: "$raffle.title" },
+        totalSales: { $sum: "$amount" },
+        totalTickets: { $sum: "$ticketsBought" },
+        totalOrders: { $sum: 1 }
+      }
+    },
+    { $sort: { totalSales: -1 } }
+  ]);
+};
+
+const fetchUserOrders = async (userId) => {
+  return await Order.find({ userId })
+    .populate("raffleId", "title drawDate ticketPrice")
+    .sort({ createdAt: -1 });
+};
+
+const fetchDailySalesData = async (startDate, endDate) => {
+  const matchStage = buildDateRangeMatchStage(startDate, endDate);
+  
+  return await Order.aggregate([
+    { $match: matchStage },
+    {
+      $group: {
+        _id: {
+          year: { $year: "$createdAt" },
+          month: { $month: "$createdAt" },
+          day: { $dayOfMonth: "$createdAt" }
+        },
+        totalSales: { $sum: "$amount" },
+        totalOrders: { $sum: 1 },
+        totalTickets: { $sum: "$ticketsBought" }
+      }
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } }
+  ]);
+};
+
+const fetchPendingReceiptOrders = async () => {
+  return await Order.find({ 
+    receiptSent: false,
+    status: "completed"
+  })
+  .populate("userId", "email name")
+  .populate("raffleId", "title")
+  .sort({ createdAt: 1 });
+};
+
+const fetchSalesStatistics = async () => {
+  const stats = await Order.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalRevenue: { $sum: "$amount" },
+        totalBaseAmount: { $sum: "$baseAmount" },
+        totalTaxAmount: { $sum: "$taxAmount" },
+        totalOrders: { $sum: 1 },
+        totalTicketsSold: { $sum: "$ticketsBought" },
+        averageOrderValue: { $avg: "$amount" },
+        averageTicketsPerOrder: { $avg: "$ticketsBought" }
+      }
+    }
+  ]);
+
+  return stats[0] || createEmptyStatistics();
+};
+
+// Data formatting functions
+const formatMonthlySalesData = (salesData) => {
+  return salesData.map((sale) => ({
+    year: sale._id.year,
+    month: sale._id.month,
+    totalSales: sale.totalSales,
+    totalBaseAmount: sale.totalBaseAmount,
+    totalTaxAmount: sale.totalTaxAmount,
+    totalOrders: sale.totalOrders,
+    totalTickets: sale.totalTickets,
+    averageOrderValue: calculateAverageOrderValue(sale.totalSales, sale.totalOrders)
+  }));
+};
+
+const formatUserOrders = (orders) => {
+  return orders.map(order => order.getOrderSummary());
+};
+
+const formatDailySalesData = (dailySales) => {
+  return dailySales.map(sale => ({
+    date: formatDateString(sale._id.year, sale._id.month, sale._id.day),
+    totalSales: sale.totalSales,
+    totalOrders: sale.totalOrders,
+    totalTickets: sale.totalTickets
+  }));
+};
+
+// Utility functions
+const buildDateMatchStageForYear = (year) => {
+  if (!year) return {};
+  
+  return {
+    createdAt: {
+      $gte: new Date(`${year}-01-01`),
+      $lt: new Date(`${parseInt(year) + 1}-01-01`)
+    }
+  };
+};
+
+const buildDateRangeMatchStage = (startDate, endDate) => {
+  if (!startDate || !endDate) return {};
+  
+  return {
+    createdAt: {
+      $gte: new Date(startDate),
+      $lte: new Date(endDate)
+    }
+  };
+};
+
+const calculateAverageOrderValue = (totalSales, totalOrders) => {
+  return totalOrders > 0 ? (totalSales / totalOrders).toFixed(2) : 0;
+};
+
+const formatDateString = (year, month, day) => {
+  return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+};
+
+const createEmptyStatistics = () => ({
+  totalRevenue: 0,
+  totalBaseAmount: 0,
+  totalTaxAmount: 0,
+  totalOrders: 0,
+  totalTicketsSold: 0,
+  averageOrderValue: 0,
+  averageTicketsPerOrder: 0
+});
+
+const handleServerError = (res, error, message) => {
+  console.error(`${message}:`, error);
+  res.status(500).json({ error: "Internal Server Error" });
 };
 
 module.exports = {

@@ -1,146 +1,14 @@
 const cron = require('node-cron');
 const Raffle = require('../Models/Raffle');
-const mongoose = require('mongoose');
-const sgMail = require('@sendgrid/mail');
 const User = require('../Models/User');
-const { google } = require('googleapis');
+const EmailService = require('../services/emailService');
+// ======================= SERVICE LAYERS =======================
+class EmailTemplateService {
+  static generateRaffleStartingReminder(user, raffle, joinLink) {
+    const startTime = this.formatDateTime(raffle.startDate);
+    const ticketCount = this.getUserTicketCount(raffle, user._id);
 
-require('dotenv').config({ path: '../.env' });
-
-// ======================= ✅ EMAIL SERVICE CLASS =======================
-class EmailService {
-  constructor() {
-    // ---------- Gmail API ----------
-    this.GMAIL_CLIENT_ID = '251445098515-k5cem4udl9o0hjelcjqbjhmfme7e4ndr.apps.googleusercontent.com';
-    this.GMAIL_CLIENT_SECRET = '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';
-    this.GMAIL_REDIRECT_URI = 'https://developers.google.com/oauthplayground';
-    this.GMAIL_REFRESH_TOKEN = '1//04wIR5Wqblu_nCgYIARAAGAQSNwF-L9IrcUh9wHSHL6khuPeWEcf0HpLm12zKZxjcv0mQRhBYUJ4jgGUrjsSSyDdXBd9kzdusSmQ';
-    this.GMAIL_FROM_EMAIL = 'voicenotify2@gmail.com';
-
-    this.oAuth2Client = new google.auth.OAuth2(
-      this.GMAIL_CLIENT_ID,
-      this.GMAIL_CLIENT_SECRET,
-      this.GMAIL_REDIRECT_URI
-    );
-    this.oAuth2Client.setCredentials({ refresh_token: this.GMAIL_REFRESH_TOKEN });
-
-    // ---------- SendGrid ----------
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    this.SENDGRID_FROM_EMAIL = 'voicenotify2@gmail.com'; // same from email
-  }
-
-  // ---------- Gmail API Send (HTML supported) ----------
-  async sendGmail(to, subject, htmlContent) {
-    try {
-      const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
-
-      // Proper MIME headers for HTML
-      const rawMessage = Buffer.from(
-        `From: "TicketStack Raffles" <${this.GMAIL_FROM_EMAIL}>\r\n` +
-        `To: ${to}\r\n` +
-        `Subject: ${subject}\r\n` +
-        `MIME-Version: 1.0\r\n` +
-        `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
-        `${htmlContent}`
-      )
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-
-      const res = await gmail.users.messages.send({
-        userId: 'me',
-        requestBody: { raw: rawMessage },
-      });
-
-      return { success: true, service: 'gmail', messageId: res.data.id };
-    } catch (error) {
-      console.error('❌ Gmail API Error:', error.message || error);
-      return { success: false, service: 'gmail', error: error.message };
-    }
-  }
-
-  // ---------- SendGrid Send ----------
-  async sendSendGrid(to, subject, htmlContent) {
-    try {
-      const msg = {
-        to,
-        from: this.SENDGRID_FROM_EMAIL,
-        subject,
-        html: htmlContent,
-        text: htmlContent.replace(/<[^>]*>/g, ''), // fallback plain text
-      };
-
-      const res = await sgMail.send(msg);
-      return {
-        success: true,
-        service: 'sendgrid',
-        messageId: res[0].headers['x-message-id'],
-      };
-    } catch (error) {
-      console.error('❌ SendGrid Error:', error.message || error);
-      return { success: false, service: 'sendgrid', error: error.message };
-    }
-  }
-
-  // ---------- Unified Send (Gmail + SendGrid fallback) ----------
-  async sendEmail(to, subject, htmlContent) {
-    const gmailResult = await this.sendGmail(to, subject, htmlContent);
-
-    if (gmailResult.success) {
-      console.log('✅ Email sent via Gmail:', gmailResult.messageId);
-      return gmailResult;
-    }
-
-    console.warn('⚠️ Gmail failed, attempting SendGrid...');
-    const sendGridResult = await this.sendSendGrid(to, subject, htmlContent);
-
-    if (sendGridResult.success) {
-      console.log('✅ Email sent via SendGrid:', sendGridResult.messageId);
-      return sendGridResult;
-    }
-
-    console.error('❌ Both Gmail and SendGrid failed.');
-    return {
-      success: false,
-      error: 'Both services failed',
-      details: [gmailResult, sendGridResult],
-    };
-  }
-}
-
-// Create email service instance
-const emailService = new EmailService();
-
-// ======================= ✅ UNIFIED EMAIL FUNCTION =======================
-const sendEmail = async (to, subject, html) => {
-  try {
-    const result = await emailService.sendEmail(to, subject, html);
-    
-    if (result.success) {
-      console.log(`✅ Email sent successfully via ${result.service}`);
-      return true;
-    } else {
-      console.error('❌ Email sending failed via all services:', result.error);
-      throw new Error(`Email sending failed: ${result.error}`);
-    }
-  } catch (error) {
-    console.error('❌ Unified email function error:', error);
-    throw error;
-  }
-};
-
-// ========== RAFFLE STARTING REMINDER EMAIL ==========
-async function sendRaffleStartingReminderEmail(user, raffle, frontendUrl) {
-  try {
-    const joinLink = `${frontendUrl}/raffles/${raffle._id}/live`;
-    const startTime = new Date(raffle.startDate).toLocaleString('en-CA', {
-      timeZone: 'America/Toronto',
-      dateStyle: 'full',
-      timeStyle: 'short'
-    });
-
-    const emailHtml = `
+    return `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; color: white;">
           <h1 style="margin: 0; font-size: 28px;">🎟️ Raffle Starting Soon!</h1>
@@ -151,135 +19,21 @@ async function sendRaffleStartingReminderEmail(user, raffle, frontendUrl) {
           <h2 style="color: #333; margin-top: 0;">Hello, ${user.username}!</h2>
           <p style="font-size: 16px;">The raffle you purchased tickets for is starting <strong>in 5 minutes!</strong></p>
           
-          <div style="background: white; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #667eea;">
-            <h3 style="color: #333; margin-top: 0;">${raffle.title}</h3>
-            <p style="color: #666; margin: 5px 0;">${raffle.description || 'Join us for an exciting raffle event!'}</p>
-            <div style="display: flex; justify-content: space-between; margin-top: 15px;">
-              <div>
-                <strong>🕒 Start Time:</strong><br>
-                ${startTime}
-              </div>
-              <div>
-                <strong>🎫 Your Tickets:</strong><br>
-                ${raffle.participants.find(p => p.userId.equals(user._id))?.ticketsBought || 0} tickets
-              </div>
-            </div>
-          </div>
-
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${joinLink}" 
-               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                      color: white; 
-                      padding: 15px 30px; 
-                      text-decoration: none; 
-                      border-radius: 5px; 
-                      font-size: 16px; 
-                      font-weight: bold;
-                      display: inline-block;">
-              🚀 Join Live Raffle
-            </a>
-          </div>
-
-          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <strong>💡 Pro Tip:</strong>
-            <p style="margin: 5px 0; font-size: 14px;">Join a few minutes early to ensure you don't miss the start of the raffle!</p>
-          </div>
-
-          <p style="font-size: 14px; color: #666; text-align: center;">
-            Can't click the button? Copy and paste this link:<br>
-            <span style="color: #667eea; word-break: break-all;">${joinLink}</span>
-          </p>
+          ${this.generateRaffleDetails(raffle, startTime, ticketCount)}
+          ${this.generateActionButton(joinLink, '🚀 Join Live Raffle', '#667eea')}
+          ${this.generateProTip('Join a few minutes early to ensure you don\'t miss the start!')}
+          ${this.generateFallbackLink(joinLink)}
         </div>
-
-        <div style="background: #333; color: white; padding: 20px; text-align: center; font-size: 12px;">
-          <p style="margin: 0;">This is an automated reminder from TicketStack Raffle System.</p>
-          <p style="margin: 5px 0;">If you have any questions, please contact our support team.</p>
-        </div>
+        ${this.generateFooter()}
       </div>
     `;
-
-    await sendEmail(
-      user.email,
-      `🚀 Reminder: ${raffle.title} Starts in 5 Minutes! - TicketStack`,
-      emailHtml
-    );
-
-    console.log(`✅ Raffle starting reminder sent to ${user.email} for "${raffle.title}"`);
-    return true;
-  } catch (err) {
-    console.error(`❌ Error sending raffle starting reminder to ${user.email}:`, err);
-    return false;
   }
-}
 
-// ========== RAFFLE STARTING REMINDER SCHEDULER ==========
-async function checkAndSendStartingReminders() {
-  console.log('⏰ Checking for raffle starting reminders...');
+  static generateRaffleEndingReminder(user, raffle, joinLink) {
+    const endTime = this.formatDateTime(raffle.endDate);
+    const ticketCount = this.getUserTicketCount(raffle, user._id);
 
-  try {
-    const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-
-    // Find raffles STARTING in exactly 5 minutes
-    const startingRaffles = await Raffle.find({
-      startDate: {
-        $gte: new Date(fiveMinutesFromNow.getTime() - 30000), // 30-second window
-        $lte: new Date(fiveMinutesFromNow.getTime() + 30000)
-      },
-      status: 'upcoming',
-      reminderSent: { $ne: true } // Only send if reminder hasn't been sent
-    }).populate('participants.userId', 'email username');
-
-    console.log(`📧 Found ${startingRaffles.length} raffles starting soon needing reminders`);
-
-    for (let raffle of startingRaffles) {
-      console.log(`🔄 Processing starting reminders for raffle: ${raffle.title}`);
-      
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-      let allEmailsSent = true;
-
-      // Send reminders to all participants
-      for (let participant of raffle.participants) {
-        if (participant.userId && participant.userId.email) {
-          const emailSent = await sendRaffleStartingReminderEmail(
-            participant.userId, 
-            raffle, 
-            frontendUrl
-          );
-          
-          if (!emailSent) {
-            allEmailsSent = false;
-          }
-        }
-      }
-
-      // Mark reminder as sent if all emails were successful
-      if (allEmailsSent) {
-        raffle.reminderSent = true;
-        raffle.reminderSentAt = new Date();
-        await raffle.save();
-        console.log(`✅ All starting reminders sent for raffle: ${raffle.title}`);
-      } else {
-        console.log(`⚠️ Some starting reminders failed for raffle: ${raffle.title}`);
-      }
-    }
-
-  } catch (err) {
-    console.error('❌ Error in raffle starting reminder scheduler:', err);
-  }
-}
-
-// ========== RAFFLE ENDING REMINDER EMAIL ==========
-async function sendRaffleEndingReminderEmail(user, raffle, frontendUrl) {
-  try {
-    const joinLink = `${frontendUrl}/raffles/${raffle._id}/live`;
-    const endTime = new Date(raffle.endDate).toLocaleString('en-CA', {
-      timeZone: 'America/Toronto',
-      dateStyle: 'full',
-      timeStyle: 'short'
-    });
-
-    const emailHtml = `
+    return `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
         <div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); padding: 30px; text-align: center; color: white;">
           <h1 style="margin: 0; font-size: 28px;">⏰ Raffle Ending Soon!</h1>
@@ -290,128 +44,20 @@ async function sendRaffleEndingReminderEmail(user, raffle, frontendUrl) {
           <h2 style="color: #333; margin-top: 0;">Hello, ${user.username}!</h2>
           <p style="font-size: 16px;">The raffle you're participating in is ending <strong>in 5 minutes!</strong></p>
           
-          <div style="background: white; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #ff6b6b;">
-            <h3 style="color: #333; margin-top: 0;">${raffle.title}</h3>
-            <p style="color: #666; margin: 5px 0;">${raffle.description || 'Final moments to join the raffle!'}</p>
-            <div style="display: flex; justify-content: space-between; margin-top: 15px;">
-              <div>
-                <strong>⏰ End Time:</strong><br>
-                ${endTime}
-              </div>
-              <div>
-                <strong>🎫 Your Tickets:</strong><br>
-                ${raffle.participants.find(p => p.userId.equals(user._id))?.ticketsBought || 0} tickets
-              </div>
-            </div>
-          </div>
-
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${joinLink}" 
-               style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); 
-                      color: white; 
-                      padding: 15px 30px; 
-                      text-decoration: none; 
-                      border-radius: 5px; 
-                      font-size: 16px; 
-                      font-weight: bold;
-                      display: inline-block;">
-              🚀 Join Live Finale
-            </a>
-          </div>
-
-          <div style="background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <strong>💡 Last Chance:</strong>
-            <p style="margin: 5px 0; font-size: 14px;">Join now to watch the winner selection live! The raffle will close automatically at the end time.</p>
-          </div>
-
-          <p style="font-size: 14px; color: #666; text-align: center;">
-            Can't click the button? Copy and paste this link:<br>
-            <span style="color: #ff6b6b; word-break: break-all;">${joinLink}</span>
-          </p>
+          ${this.generateRaffleDetails(raffle, endTime, ticketCount, 'End Time')}
+          ${this.generateActionButton(joinLink, '🚀 Join Live Finale', '#ff6b6b')}
+          ${this.generateLastChanceTip()}
+          ${this.generateFallbackLink(joinLink)}
         </div>
-
-        <div style="background: #333; color: white; padding: 20px; text-align: center; font-size: 12px;">
-          <p style="margin: 0;">This is an automated reminder from TicketStack Raffle System.</p>
-          <p style="margin: 5px 0;">If you have any questions, please contact our support team.</p>
-        </div>
+        ${this.generateFooter()}
       </div>
     `;
-
-    await sendEmail(
-      user.email,
-      `⏰ Final Chance: ${raffle.title} Ending in 5 Minutes! - TicketStack`,
-      emailHtml
-    );
-
-    console.log(`✅ Raffle ending reminder sent to ${user.email} for "${raffle.title}"`);
-    return true;
-  } catch (err) {
-    console.error(`❌ Error sending raffle ending reminder to ${user.email}:`, err);
-    return false;
   }
-}
 
-// ========== RAFFLE ENDING REMINDER SCHEDULER ==========
-async function checkAndSendEndingReminders() {
-  console.log('⏰ Checking for raffle ending reminders...');
+  static generateWinnerNotification(user, raffle) {
+    const ticketCount = this.getUserTicketCount(raffle, user._id);
 
-  try {
-    const now = new Date();
-    const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-
-    // Find raffles ENDING in exactly 5 minutes
-    const endingRaffles = await Raffle.find({
-      endDate: {
-        $gte: new Date(fiveMinutesFromNow.getTime() - 30000), // 30-second window
-        $lte: new Date(fiveMinutesFromNow.getTime() + 30000)
-      },
-      status: 'active', // Must be active (currently running)
-      reminderSent: { $ne: true } // Only send if reminder hasn't been sent
-    }).populate('participants.userId', 'email username');
-
-    console.log(`📧 Found ${endingRaffles.length} raffles ending soon needing reminders`);
-
-    for (let raffle of endingRaffles) {
-      console.log(`🔄 Processing ending reminders for raffle: ${raffle.title}`);
-      
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-      let allEmailsSent = true;
-
-      // Send reminders to all participants
-      for (let participant of raffle.participants) {
-        if (participant.userId && participant.userId.email) {
-          const emailSent = await sendRaffleEndingReminderEmail(
-            participant.userId, 
-            raffle, 
-            frontendUrl
-          );
-          
-          if (!emailSent) {
-            allEmailsSent = false;
-          }
-        }
-      }
-
-      // Mark reminder as sent if all emails were successful
-      if (allEmailsSent) {
-        raffle.reminderSent = true;
-        raffle.reminderSentAt = new Date();
-        await raffle.save();
-        console.log(`✅ All ending reminders sent for raffle: ${raffle.title}`);
-      } else {
-        console.log(`⚠️ Some ending reminders failed for raffle: ${raffle.title}`);
-      }
-    }
-
-  } catch (err) {
-    console.error('❌ Error in raffle ending reminder scheduler:', err);
-  }
-}
-
-// ========== SEND WINNER EMAIL ==========
-async function sendWinnerEmail(user, raffle) {
-  try {
-    const emailHtml = `
+    return `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto;">
         <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); padding: 30px; text-align: center; color: white;">
           <h1 style="margin: 0; font-size: 28px;">🎉 Congratulations!</h1>
@@ -425,7 +71,7 @@ async function sendWinnerEmail(user, raffle) {
           <div style="background: white; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #4CAF50;">
             <h3 style="color: #333; margin-top: 0;">${raffle.title}</h3>
             <p style="color: #666; margin: 5px 0;">${raffle.description || ''}</p>
-            <p style="margin: 10px 0;"><strong>🎫 Your Winning Tickets:</strong> ${raffle.participants.find(p => p.userId.equals(user._id))?.ticketsBought || 0}</p>
+            <p style="margin: 10px 0;"><strong>🎫 Your Winning Tickets:</strong> ${ticketCount}</p>
           </div>
 
           <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
@@ -433,154 +79,467 @@ async function sendWinnerEmail(user, raffle) {
             <p style="margin: 5px 0;">Our team will contact you shortly with prize details and delivery information.</p>
           </div>
 
-          <p style="text-align: center; color: #666;">
-            Thank you for participating in our raffle!
-          </p>
+          <p style="text-align: center; color: #666;">Thank you for participating in our raffle!</p>
         </div>
+        ${this.generateFooter('TicketStack Raffle System')}
+      </div>
+    `;
+  }
 
-        <div style="background: #333; color: white; padding: 20px; text-align: center; font-size: 12px;">
-          <p style="margin: 0;">TicketStack Raffle System</p>
+  static generateRaffleDetails(raffle, time, ticketCount, timeLabel = 'Start Time') {
+    return `
+      <div style="background: white; border-radius: 10px; padding: 20px; margin: 20px 0; border-left: 4px solid #667eea;">
+        <h3 style="color: #333; margin-top: 0;">${raffle.title}</h3>
+        <p style="color: #666; margin: 5px 0;">${raffle.description || 'Join us for an exciting raffle event!'}</p>
+        <div style="display: flex; justify-content: space-between; margin-top: 15px;">
+          <div><strong>🕒 ${timeLabel}:</strong><br>${time}</div>
+          <div><strong>🎫 Your Tickets:</strong><br>${ticketCount} tickets</div>
         </div>
       </div>
     `;
+  }
 
-    await sendEmail(
-      user.email,
-      ` Congratulations! You won the raffle: ${raffle.title} - TicketStack`,
-      emailHtml
-    );
+  static generateActionButton(link, text, color) {
+    return `
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${link}" 
+           style="background: linear-gradient(135deg, ${color} 0%, ${this.darkenColor(color)} 100%); 
+                  color: white; 
+                  padding: 15px 30px; 
+                  text-decoration: none; 
+                  border-radius: 5px; 
+                  font-size: 16px; 
+                  font-weight: bold;
+                  display: inline-block;">
+          ${text}
+        </a>
+      </div>
+    `;
+  }
 
-    console.log(`✅ Winner email sent to ${user.email} for "${raffle.title}"`);
-  } catch (err) {
-    console.error('❌ Error sending winner email:', err);
+  static generateProTip(tip) {
+    return `
+      <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <strong>💡 Pro Tip:</strong>
+        <p style="margin: 5px 0; font-size: 14px;">${tip}</p>
+      </div>
+    `;
+  }
+
+  static generateLastChanceTip() {
+    return `
+      <div style="background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+        <strong>💡 Last Chance:</strong>
+        <p style="margin: 5px 0; font-size: 14px;">Join now to watch the winner selection live! The raffle will close automatically at the end time.</p>
+      </div>
+    `;
+  }
+
+  static generateFallbackLink(link) {
+    return `
+      <p style="font-size: 14px; color: #666; text-align: center;">
+        Can't click the button? Copy and paste this link:<br>
+        <span style="color: #667eea; word-break: break-all;">${link}</span>
+      </p>
+    `;
+  }
+
+  static generateFooter(text = 'TicketStack Raffle System') {
+    return `
+      <div style="background: #333; color: white; padding: 20px; text-align: center; font-size: 12px;">
+        <p style="margin: 0;">This is an automated reminder from ${text}.</p>
+        <p style="margin: 5px 0;">If you have any questions, please contact our support team.</p>
+      </div>
+    `;
+  }
+
+  static formatDateTime(date) {
+    return new Date(date).toLocaleString('en-CA', {
+      timeZone: 'America/Toronto',
+      dateStyle: 'full',
+      timeStyle: 'short'
+    });
+  }
+
+  static getUserTicketCount(raffle, userId) {
+    return raffle.participants.find(p => p.userId.equals(userId))?.ticketsBought || 0;
+  }
+
+  static darkenColor(color) {
+    const colorMap = {
+      '#667eea': '#764ba2',
+      '#ff6b6b': '#ee5a24',
+      '#4CAF50': '#45a049'
+    };
+    return colorMap[color] || color;
   }
 }
 
-// ========== PICK WINNER ==========
-const pickWinner = async (raffle) => {
-  if (!raffle.participants || raffle.participants.length === 0) return;
-
-  // Weighted random selection
-  let ticketPool = [];
-  raffle.participants.forEach((p) => {
-    for (let i = 0; i < p.ticketsBought; i++) {
-      ticketPool.push(p.userId);
-    }
-  });
-
-  const winnerId = ticketPool[Math.floor(Math.random() * ticketPool.length)];
-  const winnerUser = await User.findById(winnerId);
-
-  if (!winnerUser) {
-    console.error('⚠️ Winner user not found for raffle:', raffle.title);
-    return;
+class RaffleNotificationService {
+  constructor(emailService) {
+    this.emailService = emailService;
   }
 
-  raffle.winner = winnerUser._id;
-  raffle.status = 'completed';
-  await raffle.save();
+  async sendRaffleStartingReminder(user, raffle, frontendUrl) {
+    const joinLink = `${frontendUrl}/raffles/${raffle._id}/live`;
+    const emailHtml = EmailTemplateService.generateRaffleStartingReminder(user, raffle, joinLink);
+    
+    return await this.sendNotificationEmail(
+      user.email,
+      `🚀 Reminder: ${raffle.title} Starts in 5 Minutes! - TicketStack`,
+      emailHtml,
+      `raffle starting reminder for "${raffle.title}"`
+    );
+  }
 
-  console.log(`🏆 Winner selected for "${raffle.title}": ${winnerUser.email}`);
-  await sendWinnerEmail(winnerUser, raffle);
-};
+  async sendRaffleEndingReminder(user, raffle, frontendUrl) {
+    const joinLink = `${frontendUrl}/raffles/${raffle._id}/live`;
+    const emailHtml = EmailTemplateService.generateRaffleEndingReminder(user, raffle, joinLink);
+    
+    return await this.sendNotificationEmail(
+      user.email,
+      `⏰ Final Chance: ${raffle.title} Ending in 5 Minutes! - TicketStack`,
+      emailHtml,
+      `raffle ending reminder for "${raffle.title}"`
+    );
+  }
 
-// ========== CRON SCHEDULES ==========
+  async sendWinnerNotification(user, raffle) {
+    const emailHtml = EmailTemplateService.generateWinnerNotification(user, raffle);
+    
+    return await this.sendNotificationEmail(
+      user.email,
+      `🎉 Congratulations! You won the raffle: ${raffle.title} - TicketStack`,
+      emailHtml,
+      `winner notification for "${raffle.title}"`
+    );
+  }
 
-// Raffle STARTING reminder check - runs every minute
-cron.schedule('* * * * *', async () => {
-  console.log('⏰ Running raffle STARTING reminder check...');
-  await checkAndSendStartingReminders();
-});
+  async sendNotificationEmail(to, subject, html, emailType) {
+    try {
+      await this.emailService.sendEmail(to, subject, html);
+      console.log(`✅ ${emailType} sent to ${to}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Error sending ${emailType} to ${to}:`, error);
+      return false;
+    }
+  }
+}
 
-// Raffle ENDING reminder check - runs every minute
-cron.schedule('* * * * *', async () => {
-  console.log('⏰ Running raffle ENDING reminder check...');
-  await checkAndSendEndingReminders();
-});
+class RaffleSchedulingService {
+  static calculateFiveMinutesFromNow() {
+    const now = new Date();
+    return new Date(now.getTime() + 5 * 60 * 1000);
+  }
 
-// Raffle closer - runs every minute
-cron.schedule('* * * * *', async () => {
-  console.log('🔍 Checking raffles for winners...');
-  try {
-    const rafflesToClose = await Raffle.find({
+  static createTimeWindow(targetTime, windowSeconds = 30) {
+    return {
+      $gte: new Date(targetTime.getTime() - windowSeconds * 1000),
+      $lte: new Date(targetTime.getTime() + windowSeconds * 1000)
+    };
+  }
+
+  static async findRafflesStartingSoon() {
+    const fiveMinutesFromNow = this.calculateFiveMinutesFromNow();
+    
+    return await Raffle.find({
+      startDate: this.createTimeWindow(fiveMinutesFromNow),
+      status: 'upcoming',
+      reminderSent: { $ne: true }
+    }).populate('participants.userId', 'email username');
+  }
+
+  static async findRafflesEndingSoon() {
+    const fiveMinutesFromNow = this.calculateFiveMinutesFromNow();
+    
+    return await Raffle.find({
+      endDate: this.createTimeWindow(fiveMinutesFromNow),
+      status: 'active',
+      reminderSent: { $ne: true }
+    }).populate('participants.userId', 'email username');
+  }
+
+  static async findCompletedRafflesNeedingWinners() {
+    return await Raffle.find({
       endDate: { $lte: new Date() },
       status: 'active',
     });
-
-    for (let raffle of rafflesToClose) {
-      await pickWinner(raffle);
-    }
-  } catch (err) {
-    console.error('❌ Error in raffle winner scheduler:', err);
   }
-});
+}
 
-// Status updater - runs every minute
-cron.schedule('* * * * *', async () => {
-  console.log('🕒 Running raffle status update check...');
-  await updateRaffleStatuses();
-});
+class RaffleStatusService {
+  static determineRaffleStatus(raffle, currentTime) {
+    if (currentTime < raffle.startDate) return 'upcoming';
+    if (currentTime >= raffle.startDate && currentTime <= raffle.endDate) return 'active';
+    if (currentTime > raffle.endDate) return 'completed';
+    return raffle.status;
+  }
 
-// ========== STATUS UPDATER ==========
-async function updateRaffleStatuses() {
-  const now = new Date();
-
-  try {
-    const raffles = await Raffle.find();
-
-    for (let raffle of raffles) {
-      let newStatus = raffle.status;
-
-      if (now < raffle.startDate) {
-        newStatus = 'upcoming';
-      } else if (now >= raffle.startDate && now <= raffle.endDate) {
-        newStatus = 'active';
-      } else if (now > raffle.endDate) {
-        newStatus = 'completed';
+  static sanitizeRaffleData(raffle) {
+    const sanitizedRaffle = raffle.toObject ? raffle.toObject() : { ...raffle };
+    
+    // Ensure raffleItems is an array
+    if (typeof sanitizedRaffle.raffleItems === 'string') {
+      try {
+        sanitizedRaffle.raffleItems = JSON.parse(sanitizedRaffle.raffleItems);
+      } catch {
+        sanitizedRaffle.raffleItems = [];
       }
+    } else if (!Array.isArray(sanitizedRaffle.raffleItems)) {
+      sanitizedRaffle.raffleItems = [];
+    }
+    
+    // Ensure category exists
+    if (!sanitizedRaffle.category) {
+      sanitizedRaffle.category = 'General';
+    }
+    
+    return sanitizedRaffle;
+  }
 
-      // Only update if status actually changed
-      if (raffle.status !== newStatus) {
-        raffle.status = newStatus;
+  static async updateRaffleStatus(raffle, newStatus) {
+    const sanitizedData = this.sanitizeRaffleData(raffle);
+    
+    await Raffle.findByIdAndUpdate(
+      raffle._id,
+      { ...sanitizedData, status: newStatus },
+      { runValidators: false }
+    );
+  }
+}
+
+class WinnerSelectionService {
+  static selectWinner(participants) {
+    if (!participants || participants.length === 0) return null;
+
+    const ticketPool = this.createTicketPool(participants);
+    const winnerIndex = Math.floor(Math.random() * ticketPool.length);
+    
+    return ticketPool[winnerIndex];
+  }
+
+  static createTicketPool(participants) {
+    const ticketPool = [];
+    
+    participants.forEach(participant => {
+      for (let i = 0; i < participant.ticketsBought; i++) {
+        ticketPool.push(participant.userId);
+      }
+    });
+    
+    return ticketPool;
+  }
+
+  static async processWinnerSelection(raffle, notificationService) {
+    const winnerId = this.selectWinner(raffle.participants);
+    
+    if (!winnerId) {
+      console.log(`⚠️ No participants found for raffle: ${raffle.title}`);
+      return null;
+    }
+
+    const winner = await User.findById(winnerId);
+    
+    if (!winner) {
+      console.error(`⚠️ Winner user not found for raffle: ${raffle.title}`);
+      return null;
+    }
+
+    await this.updateRaffleWithWinner(raffle, winner._id);
+    await notificationService.sendWinnerNotification(winner, raffle);
+
+    console.log(`🏆 Winner selected for "${raffle.title}": ${winner.email}`);
+    return winner;
+  }
+
+  static async updateRaffleWithWinner(raffle, winnerId) {
+    const sanitizedData = RaffleStatusService.sanitizeRaffleData(raffle);
+    
+    await Raffle.findByIdAndUpdate(
+      raffle._id,
+      { ...sanitizedData, winner: winnerId, status: 'completed' },
+      { new: true, runValidators: false }
+    );
+  }
+}
+
+// ======================= NOTIFICATION COORDINATORS =======================
+class RaffleReminderCoordinator {
+  constructor(notificationService) {
+    this.notificationService = notificationService;
+    this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
+  }
+
+  async sendRaffleStartingReminders() {
+    console.log('⏰ Checking for raffle starting reminders...');
+    
+    try {
+      const startingRaffles = await RaffleSchedulingService.findRafflesStartingSoon();
+      console.log(`📧 Found ${startingRaffles.length} raffles starting soon needing reminders`);
+
+      for (const raffle of startingRaffles) {
+        await this.processRemindersForRaffle(raffle, 'starting');
+      }
+    } catch (error) {
+      console.error('❌ Error in raffle starting reminder scheduler:', error);
+    }
+  }
+
+  async sendRaffleEndingReminders() {
+    console.log('⏰ Checking for raffle ending reminders...');
+    
+    try {
+      const endingRaffles = await RaffleSchedulingService.findRafflesEndingSoon();
+      console.log(`📧 Found ${endingRaffles.length} raffles ending soon needing reminders`);
+
+      for (const raffle of endingRaffles) {
+        await this.processRemindersForRaffle(raffle, 'ending');
+      }
+    } catch (error) {
+      console.error('❌ Error in raffle ending reminder scheduler:', error);
+    }
+  }
+
+  async processRemindersForRaffle(raffle, reminderType) {
+    console.log(`🔄 Processing ${reminderType} reminders for raffle: ${raffle.title}`);
+    
+    const allEmailsSent = await this.sendRemindersToParticipants(raffle, reminderType);
+    
+    if (allEmailsSent) {
+      await this.markReminderAsSent(raffle);
+      console.log(`✅ All ${reminderType} reminders sent for raffle: ${raffle.title}`);
+    } else {
+      console.log(`⚠️ Some ${reminderType} reminders failed for raffle: ${raffle.title}`);
+    }
+  }
+
+  async sendRemindersToParticipants(raffle, reminderType) {
+    let allEmailsSent = true;
+
+    for (const participant of raffle.participants) {
+      if (participant.userId && participant.userId.email) {
+        const emailSent = reminderType === 'starting' 
+          ? await this.notificationService.sendRaffleStartingReminder(participant.userId, raffle, this.frontendUrl)
+          : await this.notificationService.sendRaffleEndingReminder(participant.userId, raffle, this.frontendUrl);
         
-        // Fix raffleItems if it's a string
-        if (typeof raffle.raffleItems === 'string') {
-          try {
-            raffle.raffleItems = JSON.parse(raffle.raffleItems);
-          } catch (e) {
-            console.log(`⚠️ Fixing invalid raffleItems for raffle: ${raffle.title}`);
-            raffle.raffleItems = [];
-          }
+        if (!emailSent) {
+          allEmailsSent = false;
         }
-        
-        // Ensure category exists
-        if (!raffle.category) {
-          raffle.category = 'General';
-        }
-        
-        await raffle.save();
-        console.log(`🔄 Updated raffle "${raffle.title}" → ${newStatus}`);
       }
     }
 
-    console.log('✅ Raffle statuses updated successfully.');
-  } catch (err) {
-    console.error('❌ Error updating raffle statuses:', err);
+    return allEmailsSent;
+  }
+
+  async markReminderAsSent(raffle) {
+    raffle.reminderSent = true;
+    raffle.reminderSentAt = new Date();
+    await raffle.save();
+  }
+}
+
+class RaffleStatusCoordinator {
+  constructor(notificationService) {
+    this.notificationService = notificationService;
+  }
+
+  async updateAllRaffleStatuses() {
+    console.log('🕒 Running raffle status update check...');
     
-    // More detailed error logging
-    if (err.errors) {
-      Object.keys(err.errors).forEach(field => {
-        console.error(`   Field error: ${field} - ${err.errors[field].message}`);
+    try {
+      const raffles = await Raffle.find();
+      let updatedCount = 0;
+
+      for (const raffle of raffles) {
+        const wasUpdated = await this.updateSingleRaffleStatus(raffle);
+        if (wasUpdated) updatedCount++;
+      }
+
+      console.log(`✅ Raffle status update completed. ${updatedCount} raffles updated.`);
+    } catch (error) {
+      console.error('❌ Error updating raffle statuses:', error);
+      this.logValidationErrors(error);
+    }
+  }
+
+  async updateSingleRaffleStatus(raffle) {
+    const currentTime = new Date();
+    const newStatus = RaffleStatusService.determineRaffleStatus(raffle, currentTime);
+
+    if (raffle.status !== newStatus) {
+      await RaffleStatusService.updateRaffleStatus(raffle, newStatus);
+      console.log(`🔄 Updated raffle "${raffle.title}" → ${newStatus}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  async processCompletedRaffles() {
+    console.log('🔍 Checking raffles for winners...');
+    
+    try {
+      const completedRaffles = await RaffleSchedulingService.findCompletedRafflesNeedingWinners();
+
+      for (const raffle of completedRaffles) {
+        await WinnerSelectionService.processWinnerSelection(raffle, this.notificationService);
+      }
+    } catch (error) {
+      console.error('❌ Error in raffle winner scheduler:', error);
+    }
+  }
+
+  logValidationErrors(error) {
+    if (error.errors) {
+      Object.keys(error.errors).forEach(field => {
+        console.error(`   Field error: ${field} - ${error.errors[field].message}`);
       });
     }
   }
 }
 
-module.exports = { 
-  sendWinnerEmail, 
-  updateRaffleStatuses, 
-  checkAndSendStartingReminders,
-  checkAndSendEndingReminders,
-  sendRaffleStartingReminderEmail,
-  sendRaffleEndingReminderEmail
+// ======================= INITIALIZATION & CRON SCHEDULES =======================
+// Use the imported EmailService instance directly (it's already an instance)
+const raffleNotificationService = new RaffleNotificationService(EmailService);
+const raffleReminderCoordinator = new RaffleReminderCoordinator(raffleNotificationService);
+const raffleStatusCoordinator = new RaffleStatusCoordinator(raffleNotificationService);
+
+// Raffle STARTING reminder check - runs every minute
+cron.schedule('* * * * *', async () => {
+  await raffleReminderCoordinator.sendRaffleStartingReminders();
+});
+
+// Raffle ENDING reminder check - runs every minute
+cron.schedule('* * * * *', async () => {
+  await raffleReminderCoordinator.sendRaffleEndingReminders();
+});
+
+// Raffle status and winner processing - runs every minute
+cron.schedule('* * * * *', async () => {
+  await raffleStatusCoordinator.updateAllRaffleStatuses();
+  await raffleStatusCoordinator.processCompletedRaffles();
+});
+// ======================= EXPORTS =======================
+module.exports = {
+  // Services
+  EmailTemplateService,
+  RaffleNotificationService,
+  RaffleSchedulingService,
+  RaffleStatusService,
+  WinnerSelectionService,
+  
+  // Coordinators
+  RaffleReminderCoordinator,
+  RaffleStatusCoordinator,
+  
+  // Public functions
+  sendWinnerEmail: (user, raffle) => raffleNotificationService.sendWinnerNotification(user, raffle),
+  updateRaffleStatuses: () => raffleStatusCoordinator.updateAllRaffleStatuses(),
+  checkAndSendStartingReminders: () => raffleReminderCoordinator.sendRaffleStartingReminders(),
+  checkAndSendEndingReminders: () => raffleReminderCoordinator.sendRaffleEndingReminders(),
+  sendRaffleStartingReminderEmail: (user, raffle, frontendUrl) => 
+    raffleNotificationService.sendRaffleStartingReminder(user, raffle, frontendUrl),
+  sendRaffleEndingReminderEmail: (user, raffle, frontendUrl) => 
+    raffleNotificationService.sendRaffleEndingReminder(user, raffle, frontendUrl)
 };
