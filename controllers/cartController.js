@@ -24,7 +24,11 @@ const addToCart = async (req, res) => {
     const itemTotalCost = calculateItemTotalCost(ticketPrice, quantity);
 
     await updateCartWithItem(cart, raffleId, quantity, itemTotalCost, ticketPrice);
-    
+
+    // 🔥 FIX: re-populate so Angular receives full raffle data
+    cart = await Cart.findOne({ userId: req.user.id })
+      .populate('items.raffleId');
+
     res.json(cart);
   } catch (error) {
     handleCartError(res, error, 'Error adding to cart');
