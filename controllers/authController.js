@@ -142,6 +142,29 @@ const EmailTemplates = {
     `;
   },
 
+  resendVerificationEmail(username, verificationLink) {
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333; text-align: center;">New Verification Email - TicketStack</h2>
+        <p>Dear ${username},</p>
+        <p>We've received a request to resend your verification email. Please verify your email address:</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${verificationLink}" 
+             style="background-color: #667eea; color: white; padding: 12px 24px; 
+                    text-decoration: none; border-radius: 8px; display: inline-block;
+                    font-size: 16px; font-weight: bold;">
+            Verify My Email
+          </a>
+        </div>
+        <p>If the button doesn't work, copy and paste this link:</p>
+        <p style="word-break: break-all; color: #667eea; background-color: #f8f9fa; 
+                  padding: 10px; border-radius: 4px;">${verificationLink}</p>
+        <p><strong>Note:</strong> This is a new verification link. Previous verification links may no longer work.</p>
+        <p>Best regards,<br/>TicketStack Team</p>
+      </div>
+    `;
+  },
+
   passwordResetEmail(username, resetLink) {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -301,6 +324,7 @@ class EmailNotificationService {
   static async sendVerificationEmail(user, frontendUrl) {
     const verificationToken = crypto.randomBytes(32).toString('hex');
     user.verificationToken = verificationToken;
+    await user.save();
 
     const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
     const emailHtml = EmailTemplates.verificationEmail(user.username, verificationLink);
@@ -308,6 +332,21 @@ class EmailNotificationService {
     await emailService.sendEmail(
       user.email,
       'Verify Your Email - TicketStack',
+      emailHtml
+    );
+  }
+
+  static async sendResendVerificationEmail(user, frontendUrl) {
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    user.verificationToken = verificationToken;
+    await user.save();
+
+    const verificationLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+    const emailHtml = EmailTemplates.resendVerificationEmail(user.username, verificationLink);
+
+    await emailService.sendEmail(
+      user.email,
+      'New Verification Email - TicketStack',
       emailHtml
     );
   }
@@ -399,19 +438,28 @@ const registerUser = async (req, res) => {
     const { username, email, password } = req.body;
 
     await UserService.validateUniqueEmail(email);
-    
+
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+
     const user = new User({
       username,
       email,
       password: hashedPassword,
       emailVerified: false,
+      verificationToken,
     });
 
     await user.save();
+
+    // Send email with this token
     await EmailNotificationService.sendVerificationEmail(user, getFrontendUrl(req));
 
-    res.status(201).json({ message: 'User registered successfully! Check your email for verification.' });
+    res.status(201).json({
+      message: 'User registered successfully! Check your email for verification.'
+    });
 
   } catch (error) {
     console.error('Registration error:', error);
@@ -419,9 +467,50 @@ const registerUser = async (req, res) => {
   }
 };
 
+// NEW: Resend Verification Email Controller
+const resendVerificationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'No user found with this email' });
+    }
+
+    // Check if email is already verified
+    if (user.emailVerified) {
+      return res.status(400).json({ message: 'Email is already verified' });
+    }
+
+    // Send verification email with new token
+    await EmailNotificationService.sendResendVerificationEmail(user, getFrontendUrl(req));
+
+    res.json({ 
+      message: 'Verification email resent successfully!',
+      emailSent: true 
+    });
+
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({ message: 'Failed to resend verification email' });
+  }
+};
+
 const verifyEmail = async (req, res) => {
   try {
     const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({ message: 'Token missing' });
+    }
+
+    // FRONTEND already sends hashed token, so match directly:
     const user = await User.findOne({ verificationToken: token });
 
     if (!user) {
@@ -432,10 +521,13 @@ const verifyEmail = async (req, res) => {
     user.verificationToken = null;
     await user.save();
 
-    res.json({ message: 'Email verified successfully! You can now log in.' });
+    return res.json({
+      message: "Email verified successfully! You can now log in."
+    });
+
   } catch (error) {
-    console.error('Email verification error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Email verification error:", error);
+    return res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -516,5 +608,6 @@ module.exports = {
   forgotPassword, 
   resetPassword,
   updateUserProfile,
-  getUserProfile
+  getUserProfile,
+  resendVerificationEmail  // NEW: Added this export
 };

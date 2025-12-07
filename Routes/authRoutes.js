@@ -10,6 +10,7 @@ router.get('/verify-email', authController.verifyEmail);
 router.post('/login', authController.loginUser);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
+router.post('/resend-verification', authController.resendVerificationEmail);
 
 // ======================= EMAIL SERVICE ROUTES =======================
 router.get('/email/status', (req, res) => {
